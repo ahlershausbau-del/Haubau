@@ -936,9 +936,15 @@ async function savePunkt() {
       const {data:meta}=await sb.from('meta').select('value').eq('key','counter').single();
       const nextNum=(meta?.value||0)+1;
       await sb.from('meta').update({value:nextNum}).eq('key','counter');
-      const {data:newP,error}=await sb.from('punkte').insert({...data,nummer:nextNum,status:'open'}).select().single();
-      if(error)throw error;
-      punktId=newP.id;
+      const insertData={...data,nummer:nextNum,status:'open'};
+      let res=await sb.from('punkte').insert(insertData).select().single();
+      // Fallback: falls aufgenommen_von Spalte noch nicht existiert, nochmal ohne
+      if(res.error && res.error.message && res.error.message.includes('aufgenommen_von')) {
+        const {aufgenommen_von:_removed,...dataOhne}=insertData;
+        res=await sb.from('punkte').insert(dataOhne).select().single();
+      }
+      if(res.error)throw res.error;
+      punktId=res.data.id;
     }
 
     // Delete old photos, insert new
