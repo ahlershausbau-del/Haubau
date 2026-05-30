@@ -387,18 +387,23 @@ create policy "anon_full" on public.meta     for all to anon using (true) with c
       </select>
       <select id="filter-verantwortlicher" onchange="renderListe()"><option value="">Alle Verantwortlichen</option></select>
     </div>
-    <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-      <span style="font-size:0.82rem;color:var(--muted);font-weight:600;margin-right:2px">📤 Export:</span>
-      <span style="font-size:0.75rem;color:var(--muted);padding:0 4px;border-right:1px solid var(--border)">Ohne Fotos:</span>
-      <button class="btn btn-ghost btn-sm" onclick="exportPDF('all')">📄 PDF – Alle</button>
-      <button class="btn btn-ghost btn-sm" onclick="exportPDF('open')">📄 PDF – Offen</button>
-      <button class="btn btn-ghost btn-sm" onclick="exportPDFMitPosition('all')">📍 PDF+Position – Alle</button>
-      <button class="btn btn-ghost btn-sm" onclick="exportPDFMitPosition('open')">📍 PDF+Position – Offen</button>
-      <button class="btn btn-ghost btn-sm" onclick="exportExcel('all')">📊 Excel – Alle</button>
-      <button class="btn btn-ghost btn-sm" onclick="exportExcel('open')">📊 Excel – Offen</button>
-      <span style="font-size:0.75rem;color:var(--muted);padding:0 4px;border-right:1px solid var(--border);border-left:1px solid var(--border)">Mit Fotos:</span>
-      <button class="btn btn-ghost btn-sm" onclick="exportExcelMitBildern('all')">🖼️ Excel+Fotos – Alle</button>
-      <button class="btn btn-ghost btn-sm" onclick="exportExcelMitBildern('open')">🖼️ Excel+Fotos – Offen</button>
+    <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:0.82rem;color:var(--muted);font-weight:600">📤 Export:</span>
+      <select id="exp-content" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:0.85rem;background:white;cursor:pointer">
+        <option value="daten">Daten</option>
+        <option value="pos">Daten + Positionen</option>
+        <option value="fotos">Daten + Fotos</option>
+        <option value="fotos-pos">Daten + Fotos + Positionen</option>
+      </select>
+      <select id="exp-format" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:0.85rem;background:white;cursor:pointer">
+        <option value="pdf">📄 PDF</option>
+        <option value="excel">📊 Excel</option>
+      </select>
+      <select id="exp-filter" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:0.85rem;background:white;cursor:pointer">
+        <option value="all">Alle Punkte</option>
+        <option value="open">Nur Offene</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="runExport()" style="gap:6px">⬇️ Download</button>
     </div>
   </div>
   <div id="punkte-liste"></div>
@@ -1240,6 +1245,319 @@ function positionTooltip(e) {
 }
 
 function hideTooltip() { tooltipEl.style.display = 'none'; }
+
+// ===================== EXPORT DISPATCHER =====================
+async function runExport() {
+  const content = document.getElementById('exp-content').value;
+  const format  = document.getElementById('exp-format').value;
+  const filter  = document.getElementById('exp-filter').value;
+  const withPhotos   = content === 'fotos' || content === 'fotos-pos';
+  const withPosition = content === 'pos'   || content === 'fotos-pos';
+  if (format === 'pdf') {
+    await exportPDFUniversal(filter, withPhotos, withPosition);
+  } else {
+    if (!withPhotos && !withPosition) { exportExcel(filter); }
+    else { await exportExcelUniversal(filter, withPhotos, withPosition); }
+  }
+}
+
+// Grundriss + roter Punkt auf Canvas vorrendern → base64
+function composeFloorplanWithDot(planBase64, locX, locY) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const W = 520, H = Math.round(520 * img.naturalHeight / img.naturalWidth);
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0, W, H);
+      const dx = locX / 100 * W, dy = locY / 100 * H;
+      // Äußerer Halo
+      ctx.beginPath(); ctx.arc(dx, dy, 16, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(220,38,38,0.18)'; ctx.fill();
+      // Weißer Rand
+      ctx.beginPath(); ctx.arc(dx, dy, 10, 0, Math.PI*2);
+      ctx.fillStyle = 'white'; ctx.fill();
+      // Roter Kern
+      ctx.beginPath(); ctx.arc(dx, dy, 7, 0, Math.PI*2);
+      ctx.fillStyle = '#dc2626'; ctx.fill();
+      resolve(c.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => resolve(null);
+    img.src = planBase64;
+  });
+}
+
+// ===================== PDF UNIVERSAL =====================
+async function exportPDFUniversal(filter, withPhotos, withPosition) {
+  const pts = getExportRows(filter);
+  if (!pts.length) { alert('Keine Punkte zum Exportieren.'); return; }
+  showLoading('Vorbereiten...');
+
+  // Plandimensionen vorladen
+  const planDims = {};
+  if (withPosition) {
+    const eids = [...new Set(pts.map(p => p.etage_id).filter(Boolean))];
+    for (const eid of eids) {
+      const et = allEtagen.find(e => e.id === eid);
+      if (et?.plan_base64) planDims[eid] = await getImgDimensions(et.plan_base64);
+    }
+  }
+
+  // Fotos vorladen
+  const photosMap = {};
+  if (withPhotos) {
+    for (let i = 0; i < pts.length; i++) {
+      showLoading(`Fotos laden ${i+1}/${pts.length}...`);
+      try {
+        const { data } = await sb.from('photos').select('base64').eq('punkt_id', pts[i].id).order('idx');
+        photosMap[pts[i].id] = (data || []).slice(0, 8).map(r => r.base64);
+      } catch(e) { photosMap[pts[i].id] = []; }
+    }
+  }
+
+  showLoading('PDF erstellen...');
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const PAGE_W = 210, PAGE_H = 297, MARGIN = 12, HEADER_H = 20, FOOTER_H = 10;
+  const CONTENT_W = PAGE_W - 2*MARGIN;
+  const TEXT_W  = withPosition ? 88 : CONTENT_W - 4;
+  const PLAN_X  = MARGIN + TEXT_W + 4;
+  const PLAN_W  = withPosition ? CONTENT_W - TEXT_W - 4 : 0;
+  const PHOTO_H = 26, PHOTO_SZ = 22;
+  const today   = new Date(); today.setHours(0,0,0,0);
+
+  const titleMap = { '00':'Daten', '10':'Daten + Fotos', '01':'Daten + Positionen', '11':'Daten + Fotos + Positionen' };
+  const titleKey  = (withPhotos?'1':'0') + (withPosition?'1':'0');
+
+  function drawHeader() {
+    doc.setFillColor(204,0,0); doc.rect(0,0,PAGE_W,HEADER_H,'F');
+    doc.setTextColor(255,255,255);
+    doc.setFontSize(12); doc.setFont('helvetica','bold');
+    doc.text('Hausbau Nacharbeit — ' + titleMap[titleKey], MARGIN, 13);
+    doc.setFontSize(8); doc.setFont('helvetica','normal');
+    doc.text((filter==='open'?'Nur Offene':'Alle Punkte') + '  ·  ' + new Date().toLocaleDateString('de-DE') + '  ·  ' + pts.length + ' Punkte', PAGE_W-MARGIN, 13, { align:'right' });
+    doc.setTextColor(0,0,0);
+  }
+  drawHeader();
+  let curY = HEADER_H + 5;
+
+  for (let i = 0; i < pts.length; i++) {
+    const p       = pts[i];
+    const etage   = allEtagen.find(e => e.id === p.etage_id);
+    const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
+    const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
+    const fotos   = photosMap[p.id] || [];
+    const hasPlan = withPosition && !!(etage?.plan_base64 && p.loc_x != null);
+
+    let planH = 0;
+    if (hasPlan) {
+      const d = planDims[etage.id] || { w:4, h:3 };
+      planH = Math.min(62, PLAN_W * (d.h / d.w));
+    }
+    const TOP_H   = Math.max(hasPlan ? planH + 6 : 0, 34);
+    const BLOCK_H = TOP_H + (fotos.length > 0 ? PHOTO_H : 0);
+
+    if (curY + BLOCK_H > PAGE_H - FOOTER_H) { doc.addPage(); drawHeader(); curY = HEADER_H + 5; }
+
+    // Block background + border
+    if (i%2===0) { doc.setFillColor(250,250,250); doc.roundedRect(MARGIN,curY,CONTENT_W,BLOCK_H,2,2,'F'); }
+    doc.setDrawColor(220,220,220); doc.roundedRect(MARGIN,curY,CONTENT_W,BLOCK_H,2,2,'S');
+    doc.setFillColor(p.kategorie==='critical'?204:40, 0, p.kategorie==='critical'?0:40);
+    doc.rect(MARGIN,curY,2.5,BLOCK_H,'F');
+
+    // Text links
+    let ty = curY + 6;
+    doc.setFontSize(8); doc.setFont('helvetica','bold'); doc.setTextColor(170,0,0);
+    doc.text('#'+(p.nummer||'?'), MARGIN+4, ty);
+    doc.setFontSize(9.5); doc.setTextColor(0,0,0);
+    const tLines = doc.splitTextToSize(p.titel||'', TEXT_W-16);
+    doc.text(tLines.slice(0,2), MARGIN+14, ty);
+    ty += tLines.length > 1 ? 9 : 5.5;
+
+    doc.setFontSize(7.5); doc.setFont('helvetica','normal');
+    doc.setTextColor(p.kategorie==='critical'?204:40, 0, 0);
+    doc.text(p.kategorie==='critical'?'● Critical':'● Non-Critical', MARGIN+4, ty);
+    const kw = doc.getTextWidth(p.kategorie==='critical'?'● Critical':'● Non-Critical');
+    doc.setTextColor(p.status==='done'?22:overdue?204:120, p.status==='done'?163:0, p.status==='done'?74:0);
+    doc.text('   '+(p.status==='done'?'✓ Erledigt':overdue?'⚠ Überfällig':'Offen'), MARGIN+4+kw, ty);
+    ty += 5;
+
+    doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(60,60,60);
+    if (etage)             { doc.text('Etage: '+etage.name,                                                    MARGIN+4, ty); ty+=4.5; }
+    if (contact)           { doc.text('Zuständig: '+contact.name+(contact.firma?' ('+contact.firma+')':''),    MARGIN+4, ty); ty+=4.5; }
+    if (p.aufgenommen_von) { doc.text('Aufgen. von: '+p.aufgenommen_von,                                       MARGIN+4, ty); ty+=4.5; }
+    if (p.due_date)        { doc.setTextColor(overdue?204:60,overdue?0:60,0); doc.text('Fällig: '+fmtDate(p.due_date)+(overdue?' ⚠':''), MARGIN+4, ty); doc.setTextColor(60,60,60); ty+=4.5; }
+    if (p.beschreibung)    { doc.setFontSize(7.5); doc.setTextColor(100,100,100); doc.text(doc.splitTextToSize(p.beschreibung, TEXT_W-8).slice(0,3), MARGIN+4, ty); }
+
+    // Plan rechts
+    if (hasPlan) {
+      try {
+        doc.addImage(etage.plan_base64,'JPEG',PLAN_X,curY+3,PLAN_W,planH);
+        const dx=PLAN_X+(p.loc_x/100)*PLAN_W, dy=curY+3+(p.loc_y/100)*planH;
+        doc.setFillColor(255,255,255); doc.circle(dx,dy,2.8,'F');
+        doc.setFillColor(220,38,38);   doc.circle(dx,dy,2.0,'F');
+        doc.setDrawColor(220,38,38); doc.setLineWidth(0.4); doc.circle(dx,dy,3.8,'S'); doc.setLineWidth(0.2);
+      } catch(e) {}
+    } else if (withPosition) {
+      doc.setFillColor(245,245,245); doc.setDrawColor(220,220,220);
+      doc.roundedRect(PLAN_X, curY+3, PLAN_W, Math.max(26,TOP_H-6), 2,2,'FD');
+      doc.setFontSize(7.5); doc.setTextColor(180,180,180);
+      doc.text(p.loc_x==null?'Keine Position':'Kein Grundriss', PLAN_X+PLAN_W/2, curY+TOP_H/2, {align:'center'});
+    }
+
+    // Foto-Streifen unten
+    if (fotos.length > 0) {
+      const fy = curY + TOP_H + 2;
+      doc.setDrawColor(230,230,230); doc.setLineWidth(0.2); doc.line(MARGIN+4, fy, MARGIN+CONTENT_W-4, fy);
+      doc.setFontSize(6.5); doc.setTextColor(150,150,150);
+      doc.text('Fotos:', MARGIN+4, fy+3.5);
+      for (let j=0; j<fotos.length; j++) {
+        try { doc.addImage(fotos[j],'JPEG', MARGIN+18+j*(PHOTO_SZ+2), fy+1, PHOTO_SZ, PHOTO_SZ-1); } catch(e) {}
+      }
+    }
+
+    curY += BLOCK_H + 3;
+  }
+
+  const pc = doc.internal.getNumberOfPages();
+  for (let pg=1;pg<=pc;pg++) {
+    doc.setPage(pg); doc.setFontSize(7); doc.setTextColor(160,160,160);
+    doc.text('Seite '+pg+' von '+pc, PAGE_W/2, PAGE_H-4, {align:'center'});
+  }
+
+  hideLoading();
+  const sfx = titleMap[titleKey].replace(/ \+ /g,'_').replace('Daten','');
+  doc.save('Nacharbeit'+(sfx?'_'+sfx.trim().replace(/^_/,''):'')+'_'+(filter==='open'?'Offen':'Alle')+'_'+new Date().toISOString().slice(0,10)+'.pdf');
+}
+
+// ===================== EXCEL UNIVERSAL =====================
+async function exportExcelUniversal(filter, withPhotos, withPosition) {
+  const pts = getExportRows(filter);
+  if (!pts.length) { alert('Keine Punkte zum Exportieren.'); return; }
+  try {
+    showLoading('ExcelJS laden...');
+    await loadExcelJS();
+
+    const MAX_FOTOS  = 5;
+    const FOTO_PX    = 100;
+    const PLAN_W_PX  = 155, PLAN_H_PX = 118;
+    const ROW_H      = withPosition ? 92 : 82;
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Hausbau Nacharbeit'; wb.created = new Date();
+    const ws = wb.addWorksheet('Nacharbeit', { pageSetup:{ paperSize:9, orientation:'landscape', fitToPage:true, fitToWidth:1 } });
+
+    const cols = [
+      {header:'Nr.',             key:'nr',      width:7 },
+      {header:'Titel',           key:'titel',   width:30},
+      {header:'Kategorie',       key:'kat',     width:13},
+      {header:'Status',          key:'status',  width:17},
+      {header:'Etage',           key:'etage',   width:16},
+      {header:'Verantwortlicher',key:'verant',  width:22},
+      {header:'Aufgen. von',     key:'aufgen',  width:15},
+      {header:'Fällig',          key:'faellig', width:13},
+      {header:'Beschreibung',    key:'beschr',  width:35},
+    ];
+    const POS_COL_IDX   = 9;  // 0-based
+    const FOTO_COL_START = withPosition ? 10 : 9;
+    if (withPosition) cols.push({ header:'Position', key:'pos', width: Math.ceil(PLAN_W_PX/7)+1 });
+    if (withPhotos)   for (let k=1;k<=MAX_FOTOS;k++) cols.push({ header:`Foto ${k}`, key:`foto${k}`, width:16 });
+    ws.columns = cols;
+
+    // Header-Zeile
+    const hRow = ws.getRow(1); hRow.height = 22;
+    hRow.eachCell({includeEmpty:true}, cell => {
+      cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFCC0000'}};
+      cell.font={bold:true,color:{argb:'FFFFFFFF'},size:10,name:'Calibri'};
+      cell.alignment={vertical:'middle',horizontal:'center',wrapText:true};
+    });
+
+    const today = new Date(); today.setHours(0,0,0,0);
+
+    for (let i=0; i<pts.length; i++) {
+      const p       = pts[i];
+      showLoading(`Punkt ${i+1} von ${pts.length} verarbeiten...`);
+      const etage   = allEtagen.find(e => e.id === p.etage_id);
+      const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
+      const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
+
+      // Plan vorbereiten
+      let planImg = null;
+      if (withPosition && etage?.plan_base64 && p.loc_x != null) {
+        planImg = await composeFloorplanWithDot(etage.plan_base64, p.loc_x, p.loc_y);
+      }
+
+      // Fotos laden
+      let fotos = [];
+      if (withPhotos) {
+        try {
+          const {data} = await sb.from('photos').select('base64').eq('punkt_id',p.id).order('idx');
+          fotos = (data||[]).slice(0,MAX_FOTOS);
+        } catch(e) {}
+      }
+
+      const rowNum    = i + 2;
+      const hasMedia  = planImg || fotos.length > 0;
+
+      const row = ws.addRow({
+        nr:'#'+(p.nummer||'?'), titel:p.titel||'',
+        kat:p.kategorie==='critical'?'Critical':'Non-Critical',
+        status:p.status==='open'?(overdue?'Offen (überfällig)':'Offen'):'Erledigt',
+        etage:etage?.name||'-', verant:contact?.name||'-',
+        aufgen:p.aufgenommen_von||'-',
+        faellig:p.due_date?fmtDate(p.due_date):'-',
+        beschr:p.beschreibung||'-',
+      });
+      row.height = hasMedia ? ROW_H : 18;
+
+      const isEven = i%2===0;
+      row.eachCell({includeEmpty:true},(cell,cn)=>{
+        if(isEven) cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF9F9F9'}};
+        cell.border={top:{style:'thin',color:{argb:'FFE0E0E0'}},bottom:{style:'thin',color:{argb:'FFE0E0E0'}},left:{style:'thin',color:{argb:'FFE0E0E0'}},right:{style:'thin',color:{argb:'FFE0E0E0'}}};
+        cell.alignment={vertical:'top',horizontal:cn===1?'center':'left',wrapText:cn===9};
+        cell.font={size:9,name:'Calibri'};
+      });
+      const stCell=row.getCell(4);
+      if(p.status==='done')  stCell.font={color:{argb:'FF16A34A'},bold:true,size:9,name:'Calibri'};
+      else if(overdue)       stCell.font={color:{argb:'FFCC0000'},bold:true,size:9,name:'Calibri'};
+
+      // Plan-Bild einfügen
+      if (planImg) {
+        try {
+          const raw=planImg.replace(/^data:image\/[^;]+;base64,/,'');
+          const id=wb.addImage({base64:raw,extension:'jpeg'});
+          ws.addImage(id,{tl:{col:POS_COL_IDX+0.05,row:rowNum-1+0.05},ext:{width:PLAN_W_PX,height:PLAN_H_PX}});
+        } catch(e) {}
+      }
+
+      // Fotos einfügen
+      for (let j=0;j<fotos.length;j++) {
+        try {
+          const raw=fotos[j].base64.replace(/^data:image\/[^;]+;base64,/,'');
+          const id=wb.addImage({base64:raw,extension:'jpeg'});
+          ws.addImage(id,{tl:{col:FOTO_COL_START+j+0.08,row:rowNum-1+0.08},ext:{width:FOTO_PX,height:FOTO_PX}});
+        } catch(e) {}
+      }
+    }
+
+    ws.views=[{state:'frozen',ySplit:1}];
+    showLoading('Datei erstellen...');
+    const buffer = await wb.xlsx.writeBuffer();
+    hideLoading();
+
+    const blob = new Blob([buffer],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    const sfx = (withPhotos&&withPosition)?'Fotos_Positionen':withPhotos?'Fotos':'Positionen';
+    a.download = `Nacharbeit_${sfx}_${filter==='open'?'Offen':'Alle'}_${new Date().toISOString().slice(0,10)}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch(e) {
+    hideLoading();
+    alert('Fehler beim Excel-Export: '+e.message);
+  }
+}
 
 // ===================== EXPORT =====================
 function getExportRows(filter) {
