@@ -267,8 +267,12 @@ create table if not exists punkte (
   loc_y float8,
   status text default 'open',
   foto_count int default 0,
+  aufgenommen_von text,
   erstellt timestamptz default now()
 );
+
+-- Migration (falls Tabelle bereits existiert):
+alter table public.punkte add column if not exists aufgenommen_von text;
 
 create table if not exists photos (
   id uuid default gen_random_uuid() primary key,
@@ -381,6 +385,13 @@ create policy "anon_full" on public.meta     for all to anon using (true) with c
         <option value="done">Erledigt</option>
       </select>
       <select id="filter-verantwortlicher" onchange="renderListe()"><option value="">Alle Verantwortlichen</option></select>
+    </div>
+    <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:0.82rem;color:var(--muted);font-weight:600">📤 Export:</span>
+      <button class="btn btn-ghost btn-sm" onclick="exportPDF('all')">📄 PDF – Alle</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportPDF('open')">📄 PDF – Nur Offen</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportExcel('all')">📊 Excel – Alle</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportExcel('open')">📊 Excel – Nur Offen</button>
     </div>
   </div>
   <div id="punkte-liste"></div>
@@ -521,6 +532,9 @@ create policy "anon_full" on public.meta     for all to anon using (true) with c
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 // ===================== SUPABASE CONFIG (fest eingebaut) =====================
 const SUPABASE_URL = 'https://knwlvsndlhlxozyqmvoe.supabase.co';
@@ -540,6 +554,7 @@ function doLogin() {
     return;
   }
   storageSet('auth-user', user);
+  currentUser = user;
   document.getElementById('login-screen').style.display = 'none';
   setNavUser(user);
   initAfterLogin();
@@ -576,6 +591,7 @@ function initAfterLogin() {
 
 // ===================== STATE =====================
 let sb; // supabase client
+let currentUser = null; // eingeloggter Benutzer
 let allPunkte = [], allEtagen = [], allContacts = [];
 let editingId = null, editingEtageId = null, editingContactId = null;
 let pendingEtagePlanBase64 = null;
@@ -737,6 +753,7 @@ function renderListe() {
             ${contact?`<span class="tag">👷 ${esc(contact.name)}</span>`:''}
             ${p.due_date?`<span class="tag" style="${overdue?'color:var(--danger);font-weight:600':''}">📅 ${fmtDate(p.due_date)}${overdue?' ⚠️':''}</span>`:''}
             ${p.foto_count?`<span class="tag">📷 ${p.foto_count}</span>`:''}
+            ${p.aufgenommen_von?`<span class="tag">✍️ ${esc(p.aufgenommen_von)}</span>`:''}
             <span style="color:var(--muted);font-size:0.75rem">Eingetragen: ${fmtDateTime(p.erstellt)}</span>
           </div>
         </div>
@@ -788,6 +805,7 @@ async function openDetail(id) {
         ${etage?`<div><strong>Etage:</strong> ${esc(etage.name)}</div>`:''}
         ${contact?`<div><strong>Verantwortlicher:</strong> ${esc(contact.name)}${contact.firma?` (${esc(contact.firma)})`:''}  </div>`:''}
         ${p.due_date?`<div><strong>Fällig:</strong> <span style="${overdue?'color:var(--danger);font-weight:600':''}">${fmtDate(p.due_date)}${overdue?' ⚠️ Überfällig':''}</span></div>`:''}
+        ${p.aufgenommen_von?`<div><strong>Aufgenommen von:</strong> ✍️ ${esc(p.aufgenommen_von)}</div>`:''}
         <div><strong>Eingetragen:</strong> ${fmtDateTime(p.erstellt)}</div>
       </div></div>
     ${p.beschreibung?`<div class="detail-section"><h3>Beschreibung</h3><p style="line-height:1.7;white-space:pre-wrap">${esc(p.beschreibung)}</p></div>`:''}
@@ -906,6 +924,8 @@ async function savePunkt() {
       loc_x:locX?parseFloat(locX):null, loc_y:locY?parseFloat(locY):null,
       foto_count:currentPhotos.length,
     };
+    // Aufgenommen von nur beim Erstellen setzen (nicht überschreiben bei Edit)
+    if (!editingId) data.aufgenommen_von = currentUser ? (currentUser.charAt(0).toUpperCase() + currentUser.slice(1)) : 'Unbekannt';
 
     let punktId=editingId;
     if(editingId){
@@ -1188,6 +1208,7 @@ function showDotTooltip(event, id) {
     </div>
     ${contact ? `<div class="tt-extra">👷 ${esc(contact.name)}${contact.firma ? ` · ${esc(contact.firma)}` : ''}</div>` : ''}
     ${p.due_date ? `<div class="tt-extra" style="${overdue ? 'color:var(--danger);font-weight:600' : ''}">📅 ${fmtDate(p.due_date)}${overdue ? ' ⚠️ Überfällig' : ''}</div>` : ''}
+    ${p.aufgenommen_von ? `<div class="tt-extra">✍️ ${esc(p.aufgenommen_von)}</div>` : ''}
     ${p.beschreibung ? `<div class="tt-extra" style="margin-top:5px;border-top:1px solid var(--border);padding-top:5px">${esc(p.beschreibung.substring(0, 90))}${p.beschreibung.length > 90 ? '…' : ''}</div>` : ''}
     <div class="tt-extra" style="margin-top:4px;color:#94a3b8;font-size:0.72rem">Klicken für Details</div>`;
   tooltipEl.style.display = 'block';
@@ -1206,6 +1227,128 @@ function positionTooltip(e) {
 }
 
 function hideTooltip() { tooltipEl.style.display = 'none'; }
+
+// ===================== EXPORT =====================
+function getExportRows(filter) {
+  const pts = filter === 'open' ? allPunkte.filter(p => p.status === 'open') : [...allPunkte];
+  pts.sort((a,b) => (a.nummer||0) - (b.nummer||0));
+  return pts;
+}
+
+function exportPDF(filter) {
+  const pts = getExportRows(filter);
+  if (!pts.length) { alert('Keine Punkte zum Exportieren.'); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+  // Header
+  doc.setFillColor(204, 0, 0);
+  doc.rect(0, 0, 297, 22, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(15);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Hausbau Nacharbeitspunkte', 14, 14);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  const filterLabel = filter === 'open' ? 'Nur offene Punkte' : 'Alle Punkte';
+  doc.text(`${filterLabel}  |  Erstellt: ${new Date().toLocaleDateString('de-DE')}  |  Gesamt: ${pts.length}`, 200, 14, {align:'right'});
+
+  doc.setTextColor(0, 0, 0);
+
+  const rows = pts.map(p => {
+    const etage = allEtagen.find(e => e.id === p.etage_id);
+    const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
+    const today = new Date(); today.setHours(0,0,0,0);
+    const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
+    return [
+      '#' + (p.nummer||'?'),
+      p.titel || '',
+      p.kategorie === 'critical' ? 'Critical' : 'Non-Crit.',
+      p.status === 'open' ? (overdue ? 'Offen (!!)' : 'Offen') : 'Erledigt',
+      etage?.name || '-',
+      contact?.name || '-',
+      p.aufgenommen_von || '-',
+      p.due_date ? fmtDate(p.due_date) : '-',
+      p.beschreibung ? p.beschreibung.substring(0, 60) + (p.beschreibung.length > 60 ? '...' : '') : '-'
+    ];
+  });
+
+  doc.autoTable({
+    head: [['Nr.', 'Titel', 'Kategorie', 'Status', 'Etage', 'Verantwortlicher', 'Aufgen. von', 'Fällig', 'Beschreibung']],
+    body: rows,
+    startY: 26,
+    styles: { fontSize: 8, cellPadding: 2.5, overflow: 'linebreak', lineColor: [220,220,220], lineWidth: 0.2 },
+    headStyles: { fillColor: [204,0,0], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+    alternateRowStyles: { fillColor: [250,250,250] },
+    columnStyles: {
+      0: { cellWidth: 12 },
+      1: { cellWidth: 45 },
+      2: { cellWidth: 18 },
+      3: { cellWidth: 18 },
+      4: { cellWidth: 22 },
+      5: { cellWidth: 28 },
+      6: { cellWidth: 22 },
+      7: { cellWidth: 18 },
+      8: { cellWidth: 'auto' }
+    },
+    didParseCell: (data) => {
+      if (data.section === 'body' && data.column.index === 3) {
+        const val = data.cell.raw;
+        if (val === 'Offen (!!)') { data.cell.styles.textColor = [204,0,0]; data.cell.styles.fontStyle = 'bold'; }
+        else if (val === 'Erledigt') { data.cell.styles.textColor = [22,163,74]; }
+      }
+    },
+    margin: { left: 14, right: 14 }
+  });
+
+  // Footer mit Seitennummer
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7); doc.setTextColor(150,150,150);
+    doc.text(`Seite ${i} von ${pageCount}`, 148.5, 205, {align:'center'});
+  }
+
+  const fname = `Nacharbeit_${filter==='open'?'Offen':'Alle'}_${new Date().toISOString().slice(0,10)}.pdf`;
+  doc.save(fname);
+}
+
+function exportExcel(filter) {
+  const pts = getExportRows(filter);
+  if (!pts.length) { alert('Keine Punkte zum Exportieren.'); return; }
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const rows = pts.map(p => {
+    const etage = allEtagen.find(e => e.id === p.etage_id);
+    const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
+    const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
+    return {
+      'Nr.': '#' + (p.nummer||'?'),
+      'Titel': p.titel || '',
+      'Kategorie': p.kategorie === 'critical' ? 'Critical' : 'Non-Critical',
+      'Status': p.status === 'open' ? (overdue ? 'Offen (überfällig)' : 'Offen') : 'Erledigt',
+      'Etage': etage?.name || '-',
+      'Verantwortlicher': contact?.name || '-',
+      'Firma': contact?.firma || '-',
+      'Aufgenommen von': p.aufgenommen_von || '-',
+      'Fälligkeitsdatum': p.due_date ? fmtDate(p.due_date) : '-',
+      'Eingetragen am': fmtDateTime(p.erstellt),
+      'Fotos': p.foto_count || 0,
+      'Beschreibung': p.beschreibung || '-'
+    };
+  });
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  // Spaltenbreiten
+  ws['!cols'] = [
+    {wch:8},{wch:40},{wch:14},{wch:20},{wch:18},{wch:24},{wch:20},{wch:18},{wch:16},{wch:22},{wch:8},{wch:50}
+  ];
+  const wb = XLSX.utils.book_new();
+  const sheetName = filter === 'open' ? 'Offene Punkte' : 'Alle Punkte';
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const fname = `Nacharbeit_${filter==='open'?'Offen':'Alle'}_${new Date().toISOString().slice(0,10)}.xlsx`;
+  XLSX.writeFile(wb, fname);
+}
 
 // ===================== MODALS =====================
 function openModal(id){document.getElementById(id).classList.add('open');}
@@ -1226,6 +1369,7 @@ function storageDel(key) { try { localStorage.removeItem(key); } catch {} }
 // ===================== BOOT =====================
 const loggedInUser = storageGet('auth-user');
 if (loggedInUser && USERS[loggedInUser]) {
+  currentUser = loggedInUser;
   document.getElementById('login-screen').style.display = 'none';
   setNavUser(loggedInUser);
   initAfterLogin();
