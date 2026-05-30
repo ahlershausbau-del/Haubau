@@ -283,12 +283,26 @@ create table if not exists meta (
 );
 insert into meta (key, value) values ('counter', 0) on conflict do nothing;
 
--- Zugriff ohne Login erlauben
-alter table etagen disable row level security;
-alter table contacts disable row level security;
-alter table punkte disable row level security;
-alter table photos disable row level security;
-alter table meta disable row level security;</div>
+-- Berechtigungen für anon-Rolle (App nutzt anon key)
+grant select, insert, update, delete on public.etagen   to anon, authenticated, service_role;
+grant select, insert, update, delete on public.contacts to anon, authenticated, service_role;
+grant select, insert, update, delete on public.punkte   to anon, authenticated, service_role;
+grant select, insert, update, delete on public.photos   to anon, authenticated, service_role;
+grant select, insert, update, delete on public.meta     to anon, authenticated, service_role;
+
+-- RLS aktivieren
+alter table public.etagen   enable row level security;
+alter table public.contacts enable row level security;
+alter table public.punkte   enable row level security;
+alter table public.photos   enable row level security;
+alter table public.meta     enable row level security;
+
+-- Policies: anon darf alles (App hat eigenen Login-Schutz)
+create policy "anon_full" on public.etagen   for all to anon using (true) with check (true);
+create policy "anon_full" on public.contacts for all to anon using (true) with check (true);
+create policy "anon_full" on public.punkte   for all to anon using (true) with check (true);
+create policy "anon_full" on public.photos   for all to anon using (true) with check (true);
+create policy "anon_full" on public.meta     for all to anon using (true) with check (true);</div>
 
     <div class="steps" style="margin-top:12px">
       <ol start="4">
