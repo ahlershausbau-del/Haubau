@@ -269,11 +269,13 @@ create table if not exists punkte (
   status text default 'open',
   foto_count int default 0,
   aufgenommen_von text,
+  geschlossen_at timestamptz,
   erstellt timestamptz default now()
 );
 
 -- Migration (falls Tabelle bereits existiert):
 alter table public.punkte add column if not exists aufgenommen_von text;
+alter table public.punkte add column if not exists geschlossen_at timestamptz;
 
 create table if not exists photos (
   id uuid default gen_random_uuid() primary key,
@@ -366,6 +368,8 @@ create policy "anon_full" on public.meta     for all to anon using (true) with c
 <div id="view-dashboard" class="view">
   <div class="card-header" style="margin-bottom:20px"><h1>🗺️ Dashboard — Alle Pläne</h1></div>
   <div id="dashboard-content"></div>
+  <div id="burndown-section" style="margin-top:28px"></div>
+  <div id="assignee-section" style="margin-top:16px;margin-bottom:32px"></div>
 </div>
 
 <div id="view-liste" class="view active">
@@ -665,12 +669,28 @@ function resetConfig() {
   document.getElementById('config-screen').style.display = 'flex';
 }
 
+// ===================== TEAM CONTACTS =====================
+async function ensureTeamContacts() {
+  const teamNames = Object.keys(USERS).map(k => k.charAt(0).toUpperCase() + k.slice(1));
+  let changed = false;
+  for (const name of teamNames) {
+    if (!allContacts.find(c => c.name.toLowerCase() === name.toLowerCase() && c.firma === 'Team')) {
+      try {
+        const { data } = await sb.from('contacts').insert({ name, firma: 'Team' }).select().single();
+        if (data) { allContacts.push(data); changed = true; }
+      } catch(e) { console.warn('Team-Kontakt:', name, e); }
+    }
+  }
+  if (changed) allContacts.sort((a,b) => a.name.localeCompare(b.name));
+}
+
 // ===================== START =====================
 async function startApp() {
   document.getElementById('config-screen').style.display = 'none';
   document.getElementById('main-app').style.display = 'block';
   showLoading('Daten laden...');
   await loadAll();
+  await ensureTeamContacts();
   hideLoading();
   showView('liste');
 }
@@ -777,7 +797,13 @@ function populateFilters() {
   const eEl=document.getElementById('filter-etage'),eV=eEl.value;
   eEl.innerHTML='<option value="">Alle Etagen</option>'+allEtagen.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join(''); eEl.value=eV;
   const vEl=document.getElementById('filter-verantwortlicher'),vV=vEl.value;
-  vEl.innerHTML='<option value="">Alle Verantwortlichen</option>'+allContacts.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join(''); vEl.value=vV;
+  const team  = allContacts.filter(c => c.firma === 'Team');
+  const other = allContacts.filter(c => c.firma !== 'Team');
+  const opt   = c => `<option value="${c.id}">${esc(c.name)}</option>`;
+  vEl.innerHTML = `<option value="">Alle Verantwortlichen</option>` +
+    (team.length  ? `<optgroup label="👥 Team">${team.map(opt).join('')}</optgroup>` : '') +
+    (other.length ? `<optgroup label="👷 Externe">${other.map(opt).join('')}</optgroup>` : '');
+  vEl.value=vV;
 }
 
 // ===================== DETAIL =====================
@@ -837,7 +863,9 @@ async function openDetail(id) {
 }
 
 async function toggleDone(id, cur) {
-  await sb.from('punkte').update({status:cur==='done'?'open':'done'}).eq('id',id);
+  const newStatus = cur === 'done' ? 'open' : 'done';
+  const upd = { status: newStatus, geschlossen_at: newStatus === 'done' ? new Date().toISOString() : null };
+  await sb.from('punkte').update(upd).eq('id', id);
   await refreshPunkte(); closeModal('modal-detail'); renderListe();
 }
 
@@ -865,11 +893,20 @@ function resetForm() {
   document.getElementById('f-verantwortlicher').value='';
 }
 
+function buildContactOptions(placeholder) {
+  const team  = allContacts.filter(c => c.firma === 'Team');
+  const other = allContacts.filter(c => c.firma !== 'Team');
+  const opt   = c => `<option value="${c.id}">${esc(c.name)}</option>`;
+  return `<option value="">${placeholder}</option>` +
+    (team.length  ? `<optgroup label="👥 Team">${team.map(opt).join('')}</optgroup>` : '') +
+    (other.length ? `<optgroup label="👷 Externe">${other.map(opt).join('')}</optgroup>` : '');
+}
+
 function populateFormSelects() {
   const eEl=document.getElementById('f-etage'),eV=eEl.value;
   eEl.innerHTML='<option value="">— Etage wählen —</option>'+allEtagen.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join(''); if(eV)eEl.value=eV;
   const vEl=document.getElementById('f-verantwortlicher'),vV=vEl.value;
-  vEl.innerHTML='<option value="">— Verantwortlichen wählen —</option>'+allContacts.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join(''); if(vV)vEl.value=vV;
+  vEl.innerHTML=buildContactOptions('— Verantwortlichen wählen —'); if(vV)vEl.value=vV;
 }
 
 function onEtageChange() {
@@ -1174,13 +1211,15 @@ document.addEventListener('mousemove', e => {
   if (tooltipEl.style.display === 'block') positionTooltip(e);
 });
 
-function renderDashboard() {
+async function renderDashboard() {
   const container = document.getElementById('dashboard-content');
   const etagesWithPlan = allEtagen.filter(e => e.plan_base64);
   if (!etagesWithPlan.length) {
     container.innerHTML = '<div class="db-empty">🗺️ Noch keine Grundrisse hochgeladen.<br>Gehe zu <strong>Etagen</strong> um Pläne hinzuzufügen.</div>';
     return;
   }
+  renderBurndown();
+  renderAssigneeSummary();
   container.innerHTML = etagesWithPlan.map(etage => {
     const pts = allPunkte.filter(p => p.etage_id === etage.id);
     const located = pts.filter(p => p.loc_x != null);
@@ -1209,6 +1248,219 @@ function renderDashboard() {
         </div>
       </div>`;
   }).join('');
+}
+
+// ===================== BURNDOWN CHART =====================
+async function loadChartJS() {
+  if (window.Chart) return;
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
+    s.onload = resolve; s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+async function renderBurndown() {
+  const sec = document.getElementById('burndown-section');
+  if (!sec) return;
+
+  if (!allPunkte.length) {
+    sec.innerHTML = `<div class="card"><h2 style="margin-bottom:12px">📉 Burn Down</h2><div class="db-empty">Noch keine Punkte vorhanden.</div></div>`;
+    return;
+  }
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const sorted = [...allPunkte].sort((a,b) => new Date(a.erstellt) - new Date(b.erstellt));
+  const startDate = new Date(sorted[0].erstellt); startDate.setHours(0,0,0,0);
+
+  const totalCount = allPunkte.length;
+  const doneCount  = allPunkte.filter(p => p.status === 'done').length;
+  const openCount  = totalCount - doneCount;
+  const critOpen   = allPunkte.filter(p => p.status==='open' && p.kategorie==='critical').length;
+
+  const elapsedDays = Math.max(1, (today - startDate) / 86400000);
+  const velocity    = doneCount / elapsedDays; // Punkte/Tag
+
+  let forecastDate = openCount === 0 ? today : null;
+  if (velocity > 0 && openCount > 0) {
+    forecastDate = new Date(today.getTime() + (openCount / velocity) * 86400000);
+    // Max 3 Jahre
+    const maxFc = new Date(today.getTime() + 1095 * 86400000);
+    if (forecastDate > maxFc) forecastDate = maxFc;
+  }
+
+  const endDate = forecastDate
+    ? new Date(Math.max(forecastDate.getTime(), today.getTime() + 14*86400000))
+    : new Date(today.getTime() + 60*86400000);
+
+  const totalDays = Math.max(1, (endDate - startDate) / 86400000);
+  const STEP = Math.max(1, Math.ceil(totalDays / 28));
+
+  const labels=[], scopeData=[], openHistData=[], forecastLineData=[];
+  const hasCloseData = allPunkte.some(p => p.geschlossen_at);
+
+  for (let d = new Date(startDate); d <= endDate; d.setTime(d.getTime() + STEP*86400000)) {
+    const snap = new Date(d);
+    labels.push(snap.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'}));
+
+    const scope = allPunkte.filter(p => new Date(p.erstellt) <= snap).length;
+    scopeData.push(scope);
+
+    if (snap <= today) {
+      if (hasCloseData) {
+        const closed = allPunkte.filter(p => p.geschlossen_at && new Date(p.geschlossen_at) <= snap).length;
+        const scopeAtSnap = allPunkte.filter(p => new Date(p.erstellt) <= snap).length;
+        openHistData.push(scopeAtSnap - closed);
+      } else {
+        openHistData.push(null);
+      }
+    } else {
+      openHistData.push(null);
+    }
+
+    if (snap >= today && forecastDate) {
+      if (snap >= forecastDate) { forecastLineData.push(0); }
+      else {
+        const prog = (snap - today) / (forecastDate - today);
+        forecastLineData.push(Math.max(0, Math.round(openCount * (1 - prog))));
+      }
+    } else {
+      forecastLineData.push(null);
+    }
+  }
+
+  // Today-Marker (finde nächsten Index)
+  const todayLabel = today.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'});
+  const todayIdx = labels.indexOf(todayLabel);
+  if (todayIdx >= 0 && !hasCloseData) openHistData[todayIdx] = openCount;
+
+  const fcText = openCount === 0
+    ? '🎉 Alle Punkte erledigt!'
+    : forecastDate
+      ? `Voraussichtliches Ende: <strong>${forecastDate.toLocaleDateString('de-DE')}</strong> (in ~${Math.ceil((forecastDate-today)/86400000)} Tagen) · Tempo: ${velocity.toFixed(2)} Punkte/Tag`
+      : 'Noch keine Punkte erledigt — kein Trend berechenbar';
+
+  sec.innerHTML = `
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:16px">
+        <h2>📉 Burn Down</h2>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <div class="stat-card" style="padding:10px 16px;text-align:center;min-width:80px"><div class="stat-number" style="font-size:1.5rem;color:var(--primary)">${openCount}</div><div class="stat-label">Offen</div></div>
+          <div class="stat-card" style="padding:10px 16px;text-align:center;min-width:80px"><div class="stat-number" style="font-size:1.5rem;color:#16a34a">${doneCount}</div><div class="stat-label">Erledigt</div></div>
+          <div class="stat-card" style="padding:10px 16px;text-align:center;min-width:80px"><div class="stat-number" style="font-size:1.5rem;color:var(--danger)">${critOpen}</div><div class="stat-label">Critical offen</div></div>
+        </div>
+      </div>
+      <div style="font-size:0.85rem;color:var(--muted);margin-bottom:14px;padding:8px 12px;background:#fff8f8;border-radius:8px;border-left:3px solid var(--primary)">${fcText}</div>
+      <div style="position:relative;height:280px"><canvas id="burndown-chart"></canvas></div>
+      <div style="font-size:0.75rem;color:var(--muted);margin-top:8px;text-align:center">
+        ${!hasCloseData ? '💡 Tipp: Sobald Punkte als erledigt markiert werden, erscheint die tatsächliche Kurve.' : ''}
+      </div>
+    </div>`;
+
+  await loadChartJS();
+
+  const existing = Chart.getChart('burndown-chart');
+  if (existing) existing.destroy();
+
+  new Chart(document.getElementById('burndown-chart').getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Gesamt (Scope)',
+          data: scopeData,
+          borderColor: '#888', backgroundColor: 'rgba(136,136,136,0.07)',
+          borderWidth: 1.5, borderDash: [5,4], pointRadius: 0, fill: true, tension: 0.2, order: 3
+        },
+        {
+          label: 'Tatsächlich offen',
+          data: openHistData,
+          borderColor: '#cc0000', backgroundColor: 'rgba(204,0,0,0.08)',
+          borderWidth: 2.5, pointRadius: 3, pointBackgroundColor: '#cc0000',
+          fill: false, tension: 0.3, spanGaps: false, order: 1
+        },
+        {
+          label: 'Prognose',
+          data: forecastLineData,
+          borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,0.06)',
+          borderWidth: 2, borderDash: [7,5], pointRadius: 2, pointBackgroundColor: '#f97316',
+          fill: false, tension: 0, spanGaps: false, order: 2
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { font: { size: 11 }, usePointStyle: true } },
+        tooltip: { callbacks: { label: item => `${item.dataset.label}: ${item.raw ?? '-'}` } }
+      },
+      scales: {
+        y: { beginAtZero: true, title: { display: true, text: 'Anzahl Punkte', font:{size:11} }, ticks: { precision: 0 }, grid: { color: 'rgba(0,0,0,0.05)' } },
+        x: { ticks: { maxTicksLimit: 10, font:{size:10} }, grid: { display: false } }
+      }
+    }
+  });
+}
+
+// ===================== ASSIGNEE SUMMARY =====================
+function renderAssigneeSummary() {
+  const sec = document.getElementById('assignee-section');
+  if (!sec) return;
+
+  const openPts = allPunkte.filter(p => p.status === 'open');
+  const today   = new Date(); today.setHours(0,0,0,0);
+
+  // Gruppieren nach verantwortlicher_id
+  const groups = {};
+  openPts.forEach(p => {
+    const key = p.verantwortlicher_id || '__none__';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(p);
+  });
+
+  const rows = Object.entries(groups)
+    .sort((a,b) => b[1].length - a[1].length)
+    .map(([key, pts]) => {
+      const contact  = allContacts.find(c => c.id === key);
+      const name     = contact?.name || 'Nicht zugewiesen';
+      const isTeam   = contact?.firma === 'Team';
+      const critical = pts.filter(p => p.kategorie === 'critical').length;
+      const overdue  = pts.filter(p => p.due_date && new Date(p.due_date+'T00:00:00') < today).length;
+      const nextDue  = pts.filter(p=>p.due_date).sort((a,b)=>new Date(a.due_date)-new Date(b.due_date))[0]?.due_date;
+      const pct      = Math.round(
+        allPunkte.filter(p => p.verantwortlicher_id === (key === '__none__' ? null : key) && p.status === 'done').length /
+        Math.max(1, allPunkte.filter(p => p.verantwortlicher_id === (key === '__none__' ? null : key)).length) * 100
+      );
+      return `
+        <div style="display:flex;align-items:center;gap:14px;padding:13px 0;border-bottom:1px solid var(--border)">
+          <div class="contact-avatar" style="width:42px;height:42px;font-size:1rem;flex-shrink:0;background:${isTeam?'var(--primary)':'#444'}">${name.charAt(0).toUpperCase()}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:0.95rem">${esc(name)} ${isTeam?'<span style="font-size:0.72rem;background:rgba(204,0,0,0.1);color:var(--primary);padding:1px 7px;border-radius:999px;vertical-align:middle">Team</span>':contact?.firma?`<span style="font-size:0.75rem;color:var(--muted)">${esc(contact.firma)}</span>`:''}</div>
+            <div style="font-size:0.8rem;color:var(--muted);margin-top:2px">
+              ${nextDue ? `📅 Nächste Fälligkeit: <strong style="${new Date(nextDue+'T00:00:00')<today?'color:var(--danger)':''}">${fmtDate(nextDue)}</strong>` : 'Kein Fälligkeitsdatum'}
+              &nbsp;·&nbsp; ${pct}% erledigt
+            </div>
+            <div style="margin-top:6px;background:var(--bg);border-radius:999px;height:5px;width:100%;max-width:200px">
+              <div style="height:5px;border-radius:999px;background:${pct===100?'#16a34a':'var(--primary)'};width:${pct}%"></div>
+            </div>
+          </div>
+          <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+            <span class="badge badge-open" style="font-size:0.78rem">${pts.length} offen</span>
+            ${critical?`<span class="badge badge-critical" style="font-size:0.78rem">${critical} critical</span>`:''}
+            ${overdue?`<span style="color:var(--danger);font-size:0.8rem;font-weight:700">⚠ ${overdue} überfällig</span>`:''}
+          </div>
+        </div>`;
+    }).join('');
+
+  sec.innerHTML = `
+    <div class="card">
+      <h2 style="margin-bottom:4px">👷 Offene Punkte je Verantwortlichem</h2>
+      <p style="font-size:0.82rem;color:var(--muted);margin-bottom:14px">${openPts.length} offene Punkte insgesamt</p>
+      ${rows || '<div class="db-empty">🎉 Alle Punkte sind erledigt!</div>'}
+    </div>`;
 }
 
 function showDotTooltip(event, id) {
