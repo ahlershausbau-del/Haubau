@@ -387,12 +387,16 @@ create policy "anon_full" on public.meta     for all to anon using (true) with c
       </select>
       <select id="filter-verantwortlicher" onchange="renderListe()"><option value="">Alle Verantwortlichen</option></select>
     </div>
-    <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <span style="font-size:0.82rem;color:var(--muted);font-weight:600">📤 Export:</span>
+    <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:0.82rem;color:var(--muted);font-weight:600;margin-right:2px">📤 Export:</span>
+      <span style="font-size:0.75rem;color:var(--muted);padding:0 4px;border-right:1px solid var(--border)">Ohne Fotos:</span>
       <button class="btn btn-ghost btn-sm" onclick="exportPDF('all')">📄 PDF – Alle</button>
-      <button class="btn btn-ghost btn-sm" onclick="exportPDF('open')">📄 PDF – Nur Offen</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportPDF('open')">📄 PDF – Offen</button>
       <button class="btn btn-ghost btn-sm" onclick="exportExcel('all')">📊 Excel – Alle</button>
-      <button class="btn btn-ghost btn-sm" onclick="exportExcel('open')">📊 Excel – Nur Offen</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportExcel('open')">📊 Excel – Offen</button>
+      <span style="font-size:0.75rem;color:var(--muted);padding:0 4px;border-right:1px solid var(--border);border-left:1px solid var(--border)">Mit Fotos:</span>
+      <button class="btn btn-ghost btn-sm" onclick="exportExcelMitBildern('all')">🖼️ Excel+Fotos – Alle</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportExcelMitBildern('open')">🖼️ Excel+Fotos – Offen</button>
     </div>
   </div>
   <div id="punkte-liste"></div>
@@ -1355,6 +1359,149 @@ function exportExcel(filter) {
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
   const fname = `Nacharbeit_${filter==='open'?'Offen':'Alle'}_${new Date().toISOString().slice(0,10)}.xlsx`;
   XLSX.writeFile(wb, fname);
+}
+
+// ===================== EXCEL MIT FOTOS =====================
+async function loadExcelJS() {
+  if (window.ExcelJS) return;
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('ExcelJS konnte nicht geladen werden'));
+    document.head.appendChild(s);
+  });
+}
+
+async function exportExcelMitBildern(filter) {
+  const pts = getExportRows(filter);
+  if (!pts.length) { alert('Keine Punkte zum Exportieren.'); return; }
+
+  try {
+    showLoading('ExcelJS laden...');
+    await loadExcelJS();
+
+    const MAX_FOTOS = 5;
+    const IMG_PX    = 100;   // Bildgröße in Pixel
+    const ROW_H     = 82;    // Zeilenhöhe in Punkten (~110px)
+    const COL_W     = 16;    // Foto-Spaltenbreite in Zeichen (~112px)
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Hausbau Nacharbeit';
+    wb.created = new Date();
+
+    const ws = wb.addWorksheet('Nacharbeit', {
+      pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1 }
+    });
+
+    // Spalten definieren
+    const cols = [
+      { header: 'Nr.',             key: 'nr',      width: 7  },
+      { header: 'Titel',           key: 'titel',   width: 30 },
+      { header: 'Kategorie',       key: 'kat',     width: 13 },
+      { header: 'Status',          key: 'status',  width: 17 },
+      { header: 'Etage',           key: 'etage',   width: 16 },
+      { header: 'Verantwortlicher',key: 'verant',  width: 22 },
+      { header: 'Aufgen. von',     key: 'aufgen',  width: 15 },
+      { header: 'Fällig',          key: 'faellig', width: 13 },
+      { header: 'Beschreibung',    key: 'beschr',  width: 35 },
+    ];
+    for (let i = 1; i <= MAX_FOTOS; i++) cols.push({ header: `Foto ${i}`, key: `foto${i}`, width: COL_W });
+    ws.columns = cols;
+
+    // Header-Zeile stylen
+    const hRow = ws.getRow(1);
+    hRow.height = 22;
+    hRow.eachCell({ includeEmpty: true }, cell => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCC0000' } };
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10, name: 'Calibri' };
+      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    });
+
+    const today = new Date(); today.setHours(0,0,0,0);
+
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      showLoading(`Punkt ${i + 1} von ${pts.length} verarbeiten...`);
+
+      const etage   = allEtagen.find(e => e.id === p.etage_id);
+      const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
+      const overdue = p.status === 'open' && p.due_date && new Date(p.due_date + 'T00:00:00') < today;
+
+      // Fotos aus Supabase laden
+      let fotos = [];
+      try {
+        const { data } = await sb.from('photos').select('base64').eq('punkt_id', p.id).order('idx');
+        fotos = (data || []).slice(0, MAX_FOTOS);
+      } catch(e) {}
+
+      const rowNum    = i + 2;
+      const hasFotos  = fotos.length > 0;
+
+      const row = ws.addRow({
+        nr:      '#' + (p.nummer || '?'),
+        titel:   p.titel || '',
+        kat:     p.kategorie === 'critical' ? 'Critical' : 'Non-Critical',
+        status:  p.status === 'open' ? (overdue ? 'Offen (überfällig)' : 'Offen') : 'Erledigt',
+        etage:   etage?.name || '-',
+        verant:  contact?.name || '-',
+        aufgen:  p.aufgenommen_von || '-',
+        faellig: p.due_date ? fmtDate(p.due_date) : '-',
+        beschr:  p.beschreibung || '-',
+      });
+
+      row.height = hasFotos ? ROW_H : 18;
+
+      // Zeilen-Styling
+      const isEven = i % 2 === 0;
+      row.eachCell({ includeEmpty: true }, (cell, colNum) => {
+        if (isEven) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9F9F9' } };
+        cell.border = {
+          top:    { style: 'thin', color: { argb: 'FFE0E0E0' } },
+          bottom: { style: 'thin', color: { argb: 'FFE0E0E0' } },
+          left:   { style: 'thin', color: { argb: 'FFE0E0E0' } },
+          right:  { style: 'thin', color: { argb: 'FFE0E0E0' } }
+        };
+        cell.alignment = { vertical: 'top', horizontal: colNum === 1 ? 'center' : 'left', wrapText: colNum === 9 };
+        cell.font = { size: 9, name: 'Calibri' };
+      });
+
+      // Status-Zelle einfärben
+      const stCell = row.getCell(4);
+      if (p.status === 'done')  stCell.font = { color: { argb: 'FF16A34A' }, bold: true, size: 9, name: 'Calibri' };
+      else if (overdue)         stCell.font = { color: { argb: 'FFCC0000' }, bold: true, size: 9, name: 'Calibri' };
+
+      // Bilder einfügen — jedes Foto bekommt seine eigene Spalte (J, K, L, M, N)
+      for (let j = 0; j < fotos.length; j++) {
+        try {
+          const raw   = fotos[j].base64.replace(/^data:image\/[^;]+;base64,/, '');
+          const imgId = wb.addImage({ base64: raw, extension: 'jpeg' });
+          ws.addImage(imgId, {
+            tl:  { col: 9 + j + 0.08, row: rowNum - 1 + 0.08 },
+            ext: { width: IMG_PX, height: IMG_PX }
+          });
+        } catch(e) { console.warn('Bild übersprungen', j, e); }
+      }
+    }
+
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+
+    showLoading('Datei erstellen...');
+    const buffer = await wb.xlsx.writeBuffer();
+    hideLoading();
+
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `Nacharbeit_Fotos_${filter === 'open' ? 'Offen' : 'Alle'}_${new Date().toISOString().slice(0,10)}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+  } catch(e) {
+    hideLoading();
+    alert('Fehler beim Excel-Export mit Fotos: ' + e.message);
+  }
 }
 
 // ===================== MODALS =====================
