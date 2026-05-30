@@ -358,6 +358,7 @@ create policy "anon_full" on public.meta     for all to anon using (true) with c
   </div>
   <div class="sidebar-footer">
     <div class="sidebar-user" id="nav-user-pill">👤</div>
+    <button id="lang-btn" onclick="toggleLang()" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:white;padding:7px 12px;border-radius:8px;cursor:pointer;font-size:0.82rem;text-align:left;width:100%;font-family:inherit;transition:background 0.15s;margin-bottom:4px" onmouseover="this.style.background='rgba(255,255,255,0.22)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'">🇬🇧 EN</button>
     <button class="sidebar-logout" onclick="logout()">🚪 Abmelden</button>
   </div>
 </div>
@@ -392,7 +393,7 @@ create policy "anon_full" on public.meta     for all to anon using (true) with c
       <select id="filter-verantwortlicher" onchange="renderListe()"><option value="">Alle Verantwortlichen</option></select>
     </div>
     <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <span style="font-size:0.82rem;color:var(--muted);font-weight:600">📤 Export:</span>
+      <span data-exp-label style="font-size:0.82rem;color:var(--muted);font-weight:600">📤 Export:</span>
       <select id="exp-content" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:0.85rem;background:white;cursor:pointer">
         <option value="daten">Daten</option>
         <option value="pos">Daten + Positionen</option>
@@ -407,7 +408,7 @@ create policy "anon_full" on public.meta     for all to anon using (true) with c
         <option value="all">Alle Punkte</option>
         <option value="open">Nur Offene</option>
       </select>
-      <button class="btn btn-primary btn-sm" onclick="runExport()" style="gap:6px">⬇️ Download</button>
+      <button data-exp-btn class="btn btn-primary btn-sm" onclick="runExport()" style="gap:6px">⬇️ Download</button>
     </div>
   </div>
   <div id="punkte-liste"></div>
@@ -556,6 +557,424 @@ create policy "anon_full" on public.meta     for all to anon using (true) with c
 const SUPABASE_URL = 'https://knwlvsndlhlxozyqmvoe.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtud2x2c25kbGhseG96eXFtdm9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAxMDAzMTgsImV4cCI6MjA5NTY3NjMxOH0.LqczYAgVz6nm84sZygZFgahgy8r8Ddd21AAKSCpfDJE';
 
+// ===================== LANGUAGE =====================
+let currentLang = (function(){ try{ return localStorage.getItem('lang')||'de'; }catch{ return 'de'; } })();
+
+const LANG = {
+  de: {
+    /* Sidebar */
+    navDashboard:'🗺️ Dashboard', navListe:'📋 Punkte', navNeu:'➕ Neuer Punkt',
+    navEtagen:'🏢 Etagen', navVerantwortliche:'👷 Verantwortliche',
+    navLogout:'🚪 Abmelden', langToggle:'🇬🇧 EN',
+    sidebarBrand:'🏗️ Hausbau<br>Nacharbeit', topbarBrand:'🏗️ Nacharbeit',
+    /* Login */
+    appTitle:'Hausbau Nacharbeit', loginSub:'Bitte anmelden um fortzufahren',
+    loginUserLabel:'Benutzer', loginPwLabel:'Passwort',
+    loginPwPlaceholder:'Passwort eingeben...', loginBtn:'🔑 Anmelden',
+    loginError:'❌ Falsches Passwort', confirmLogout:'Abmelden?',
+    /* Stats */
+    statTotal:'Gesamt', statCritical:'Critical', statOpen:'Offen',
+    statDone:'Erledigt', statOverdue:'Überfällig',
+    /* Liste */
+    listTitle:'Nacharbeitspunkte', searchPlaceholder:'🔍 Suchen...',
+    allFloors:'Alle Etagen', allCats:'Alle Kategorien',
+    allStatus:'Alle Status', allResp:'Alle Verantwortlichen',
+    statusOpen:'Offen', statusDone:'Erledigt',
+    catCritical:'🔴 Critical', catNonCritical:'⚫ Non-Critical',
+    noItems:'Keine Punkte gefunden',
+    enteredOn:'Eingetragen:', recordedByIcon:'✍️',
+    /* Export controls */
+    expLabel:'📤 Export:', expDaten:'Daten', expPos:'Daten + Positionen',
+    expFotos:'Daten + Fotos', expFotosPos:'Daten + Fotos + Positionen',
+    expPDF:'📄 PDF', expExcel:'📊 Excel',
+    expAll:'Alle Punkte', expOnlyOpen:'Nur Offene',
+    expDownload:'⬇️ Download',
+    /* Detail */
+    detFloor:'Etage:', detResp:'Verantwortlicher:', detDue:'Fällig:',
+    detRecBy:'Aufgenommen von:', detCreated:'Eingetragen:',
+    detDesc:'Beschreibung', detContact:'Kontakt', detPosition:'Position auf Grundriss',
+    detPhotos:'Fotos', detOverdue:'⚠️ Überfällig',
+    btnEdit:'✏️ Bearbeiten', btnMarkDone:'✓ Als erledigt markieren',
+    btnMarkOpen:'↩ Als offen markieren', btnDelete:'🗑️ Löschen',
+    confirmDelete:'Diesen Punkt wirklich löschen?',
+    /* Form */
+    formTitleNew:'Neuer Nacharbeitspunkt', formTitleEdit:'Punkt #{n} bearbeiten',
+    labelTitle:'Titel *', placeholderTitle:'z.B. Riss in Außenwand',
+    labelCat:'Kategorie *', labelDesc:'Beschreibung',
+    placeholderDesc:'Detaillierte Beschreibung...',
+    labelFloor:'Etage *', placeholderFloor:'— Etage wählen —',
+    labelResp:'Verantwortlicher', placeholderResp:'— Verantwortlichen wählen —',
+    labelDue:'Fälligkeitsdatum',
+    posHeading:'📍 Position auf Grundriss markieren',
+    posHint:'Klicke auf den Grundriss um die genaue Position zu markieren.',
+    photosHeading:'📷 Fotos',
+    photosHint:'Werden automatisch komprimiert (max. ~200 KB/Foto)',
+    btnCamera:'📷 Kamera', btnGallery:'🖼️ Galerie',
+    btnSave:'💾 Speichern', btnCancel:'Abbrechen',
+    noFloorPlan:'⚠️ Kein Grundriss für diese Etage.',
+    uploadNow:'Jetzt hochladen →',
+    /* Etagen */
+    floorsTitle:'🏢 Etagen & Grundrisse', floorsNewBtn:'+ Neue Etage',
+    floorPoints:(n)=>`${n} Punkt${n!==1?'e':''}`,
+    floorModalNew:'Neue Etage', floorModalEdit:'Etage bearbeiten',
+    floorNameLabel:'Name der Etage *',
+    floorNamePlaceholder:'z.B. Erdgeschoss, 1. OG, Keller',
+    floorPlanLabel:'Grundriss hochladen',
+    floorPlanHint:'Bilder (JPG, PNG) oder PDF — bei PDF Seite auswählen',
+    floorSave:'Speichern', floorCancel:'Abbrechen',
+    floorSelectPage:'Seite auswählen:',
+    floorPage:(n)=>`Seite ${n}`,
+    floorDeleteConfirm:(n)=>`Diese Etage hat ${n} Punkt(e). Trotzdem löschen?`,
+    floorEmpty:'Noch keine Etagen angelegt.',
+    /* Contacts */
+    contactsTitle:'👷 Verantwortliche', contactsNewBtn:'+ Neu',
+    contactModalNew:'Neuer Verantwortlicher',
+    contactModalEdit:'Verantwortlichen bearbeiten',
+    cLabelName:'Name *', cPlaceholderName:'Vor- und Nachname',
+    cLabelPhone:'Telefonnummer', cPlaceholderPhone:'+49 ...',
+    cLabelEmail:'E-Mail', cPlaceholderEmail:'name@firma.de',
+    cLabelFirma:'Firma / Gewerk', cPlaceholderFirma:'z.B. Maurer GmbH',
+    contactSave:'Speichern', contactCancel:'Abbrechen',
+    contactDeleteConfirm:'Verantwortlichen wirklich löschen?',
+    contactEmpty:'Noch keine Verantwortlichen.',
+    groupTeam:'👥 Team', groupExternal:'👷 Externe',
+    /* Dashboard */
+    dashTitle:'🗺️ Dashboard — Alle Pläne',
+    dashNoPlans:'🗺️ Noch keine Grundrisse hochgeladen.<br>Gehe zu <strong>Etagen</strong> um Pläne hinzuzufügen.',
+    dashTotal:(n)=>`${n} Punkt${n!==1?'e':''} gesamt`,
+    dashOpen:(n)=>`${n} offen`, dashDone:(n)=>`${n} erledigt`,
+    dashNoPos:(n)=>`${n} ohne Position`,
+    /* Burndown */
+    bdTitle:'📉 Burn Down', bdOpen:'Offen', bdDone:'Erledigt',
+    bdCritical:'Critical offen', bdScope:'Gesamt (Scope)',
+    bdActual:'Tatsächlich offen', bdForecast:'Prognose',
+    bdYLabel:'Anzahl Punkte',
+    bdAllDone:'🎉 Alle Punkte erledigt!',
+    bdForecastText:(d,days,v)=>`Voraussichtliches Ende: <strong>${d}</strong> (in ~${days} Tagen) · Tempo: ${v} Punkte/Tag`,
+    bdNoTrend:'Noch keine Punkte erledigt — kein Trend berechenbar',
+    bdTip:'💡 Tipp: Sobald Punkte als erledigt markiert werden, erscheint die tatsächliche Kurve.',
+    bdEmpty:'Noch keine Punkte vorhanden.',
+    /* Assignee */
+    asTitle:'👷 Offene Punkte je Verantwortlichem',
+    asTotal:(n)=>`${n} offene Punkte insgesamt`,
+    asUnassigned:'Nicht zugewiesen', asNoDue:'Kein Fälligkeitsdatum',
+    asNextDue:'Nächste Fälligkeit:', asPct:(p)=>`${p}% erledigt`,
+    asOpen:(n)=>`${n} offen`, asCritical:(n)=>`${n} critical`,
+    asOverdue:(n)=>`⚠ ${n} überfällig`,
+    asAllDone:'🎉 Alle Punkte sind erledigt!',
+    /* Tooltip */
+    ttClick:'Klicken für Details',
+    /* Loading */
+    ldgData:'Daten laden...', ldgConnect:'Verbinden...',
+    ldgDelete:'Löschen...', ldgSave:'Speichern...',
+    ldgPhotos:'Fotos laden...', ldgPDF:'PDF erstellen...',
+    ldgCompress:(n)=>`${n} Foto(s) komprimieren...`,
+    ldgProcess:(i,n)=>`Punkt ${i} von ${n} verarbeiten...`,
+    ldgExcelLoad:'ExcelJS laden...', ldgFileCreate:'Datei erstellen...',
+    ldgPhotosLoad:(i,n)=>`Fotos laden ${i}/${n}...`,
+    ldgPrepare:'Vorbereiten...',
+    /* PDF strings */
+    pdfTitle:'Hausbau Nacharbeit',
+    pdfFilterAll:'Alle Punkte', pdfFilterOpen:'Nur Offene',
+    pdfPoints:(n)=>`${n} Punkte`,
+    pdfFloor:'Etage: ', pdfResp:'Zuständig: ', pdfRecBy:'Aufgen. von: ', pdfDue:'Fällig: ',
+    pdfCritical:'● Critical', pdfNonCritical:'● Non-Critical',
+    pdfDone:'✓ Erledigt', pdfOverdueStatus:'⚠ Überfällig', pdfStatusOpen:'Offen',
+    pdfNoPos:'Keine Position', pdfNoFloor:'Kein Grundriss',
+    pdfPhotosLabel:'Fotos:', pdfPage:(p,t)=>`Seite ${p} von ${t}`,
+    /* Excel headers */
+    xlNr:'Nr.', xlTitle:'Titel', xlCat:'Kategorie', xlStatus:'Status',
+    xlFloor:'Etage', xlResp:'Verantwortlicher', xlRecBy:'Aufgen. von',
+    xlDue:'Fällig', xlDesc:'Beschreibung', xlPos:'Position',
+    xlPhoto:(n)=>`Foto ${n}`, xlFirma:'Firma',
+    xlRecByFull:'Aufgenommen von', xlDueFull:'Fälligkeitsdatum',
+    xlCreated:'Eingetragen am', xlPhotos:'Fotos',
+    xlCritical:'Critical', xlNonCritical:'Non-Critical',
+    xlOpen:'Offen', xlOverdue:'Offen (überfällig)', xlDone:'Erledigt',
+    xlSheetAll:'Alle Punkte', xlSheetOpen:'Offene Punkte',
+    /* Filenames */
+    fileOpen:'Offen', fileAll:'Alle',
+    /* Alerts */
+    alertNoItems:'Keine Punkte zum Exportieren.',
+    alertTitleReq:'Bitte Titel eingeben', alertFloorReq:'Bitte Etage wählen',
+    alertNameReq:'Bitte Name eingeben',
+    alertSaveErr:'Fehler: ', alertExcelErr:'Fehler beim Excel-Export: ',
+    alertFloorSaveErr:'Fehler beim Speichern: ',
+    resetConfirm:'Supabase-Verbindung zurücksetzen?',
+  },
+  en: {
+    /* Sidebar */
+    navDashboard:'🗺️ Dashboard', navListe:'📋 Items', navNeu:'➕ New Item',
+    navEtagen:'🏢 Floors', navVerantwortliche:'👷 Responsible',
+    navLogout:'🚪 Log Out', langToggle:'🇩🇪 DE',
+    sidebarBrand:'🏗️ Construction<br>Rework', topbarBrand:'🏗️ Rework',
+    /* Login */
+    appTitle:'Construction Rework', loginSub:'Please log in to continue',
+    loginUserLabel:'User', loginPwLabel:'Password',
+    loginPwPlaceholder:'Enter password...', loginBtn:'🔑 Log In',
+    loginError:'❌ Wrong password', confirmLogout:'Log out?',
+    /* Stats */
+    statTotal:'Total', statCritical:'Critical', statOpen:'Open',
+    statDone:'Done', statOverdue:'Overdue',
+    /* Liste */
+    listTitle:'Rework Items', searchPlaceholder:'🔍 Search...',
+    allFloors:'All Floors', allCats:'All Categories',
+    allStatus:'All Status', allResp:'All Responsible',
+    statusOpen:'Open', statusDone:'Done',
+    catCritical:'🔴 Critical', catNonCritical:'⚫ Non-Critical',
+    noItems:'No items found',
+    enteredOn:'Created:', recordedByIcon:'✍️',
+    /* Export controls */
+    expLabel:'📤 Export:', expDaten:'Data', expPos:'Data + Positions',
+    expFotos:'Data + Photos', expFotosPos:'Data + Photos + Positions',
+    expPDF:'📄 PDF', expExcel:'📊 Excel',
+    expAll:'All Items', expOnlyOpen:'Open Only',
+    expDownload:'⬇️ Download',
+    /* Detail */
+    detFloor:'Floor:', detResp:'Responsible:', detDue:'Due:',
+    detRecBy:'Recorded by:', detCreated:'Created:',
+    detDesc:'Description', detContact:'Contact', detPosition:'Position on Floor Plan',
+    detPhotos:'Photos', detOverdue:'⚠️ Overdue',
+    btnEdit:'✏️ Edit', btnMarkDone:'✓ Mark as done',
+    btnMarkOpen:'↩ Mark as open', btnDelete:'🗑️ Delete',
+    confirmDelete:'Really delete this item?',
+    /* Form */
+    formTitleNew:'New Rework Item', formTitleEdit:'Edit Item #{n}',
+    labelTitle:'Title *', placeholderTitle:'e.g. Crack in outer wall',
+    labelCat:'Category *', labelDesc:'Description',
+    placeholderDesc:'Detailed description...',
+    labelFloor:'Floor *', placeholderFloor:'— Select floor —',
+    labelResp:'Responsible', placeholderResp:'— Select responsible —',
+    labelDue:'Due Date',
+    posHeading:'📍 Mark position on floor plan',
+    posHint:'Click on the floor plan to mark the exact position.',
+    photosHeading:'📷 Photos',
+    photosHint:'Automatically compressed (max. ~200 KB/photo)',
+    btnCamera:'📷 Camera', btnGallery:'🖼️ Gallery',
+    btnSave:'💾 Save', btnCancel:'Cancel',
+    noFloorPlan:'⚠️ No floor plan for this floor.',
+    uploadNow:'Upload now →',
+    /* Etagen */
+    floorsTitle:'🏢 Floors & Floor Plans', floorsNewBtn:'+ New Floor',
+    floorPoints:(n)=>`${n} item${n!==1?'s':''}`,
+    floorModalNew:'New Floor', floorModalEdit:'Edit Floor',
+    floorNameLabel:'Floor Name *',
+    floorNamePlaceholder:'e.g. Ground Floor, 1st Floor, Basement',
+    floorPlanLabel:'Upload Floor Plan',
+    floorPlanHint:'Images (JPG, PNG) or PDF — select page for PDF',
+    floorSave:'Save', floorCancel:'Cancel',
+    floorSelectPage:'Select page:',
+    floorPage:(n)=>`Page ${n}`,
+    floorDeleteConfirm:(n)=>`This floor has ${n} item(s). Delete anyway?`,
+    floorEmpty:'No floors added yet.',
+    /* Contacts */
+    contactsTitle:'👷 Responsible Parties', contactsNewBtn:'+ New',
+    contactModalNew:'New Responsible Party',
+    contactModalEdit:'Edit Responsible Party',
+    cLabelName:'Name *', cPlaceholderName:'First and last name',
+    cLabelPhone:'Phone Number', cPlaceholderPhone:'+49 ...',
+    cLabelEmail:'E-Mail', cPlaceholderEmail:'name@company.com',
+    cLabelFirma:'Company / Trade', cPlaceholderFirma:'e.g. Mason GmbH',
+    contactSave:'Save', contactCancel:'Cancel',
+    contactDeleteConfirm:'Really delete this responsible party?',
+    contactEmpty:'No responsible parties added yet.',
+    groupTeam:'👥 Team', groupExternal:'👷 External',
+    /* Dashboard */
+    dashTitle:'🗺️ Dashboard — All Plans',
+    dashNoPlans:'🗺️ No floor plans uploaded yet.<br>Go to <strong>Floors</strong> to add plans.',
+    dashTotal:(n)=>`${n} item${n!==1?'s':''} total`,
+    dashOpen:(n)=>`${n} open`, dashDone:(n)=>`${n} done`,
+    dashNoPos:(n)=>`${n} without position`,
+    /* Burndown */
+    bdTitle:'📉 Burn Down', bdOpen:'Open', bdDone:'Done',
+    bdCritical:'Critical open', bdScope:'Total (Scope)',
+    bdActual:'Actually open', bdForecast:'Forecast',
+    bdYLabel:'Number of items',
+    bdAllDone:'🎉 All items completed!',
+    bdForecastText:(d,days,v)=>`Expected completion: <strong>${d}</strong> (in ~${days} days) · Rate: ${v} items/day`,
+    bdNoTrend:'No items done yet — trend cannot be calculated',
+    bdTip:'💡 Tip: Once items are marked as done, the actual curve will appear.',
+    bdEmpty:'No items yet.',
+    /* Assignee */
+    asTitle:'👷 Open Items per Responsible Party',
+    asTotal:(n)=>`${n} open item${n!==1?'s':''} total`,
+    asUnassigned:'Unassigned', asNoDue:'No due date',
+    asNextDue:'Next due:', asPct:(p)=>`${p}% done`,
+    asOpen:(n)=>`${n} open`, asCritical:(n)=>`${n} critical`,
+    asOverdue:(n)=>`⚠ ${n} overdue`,
+    asAllDone:'🎉 All items are done!',
+    /* Tooltip */
+    ttClick:'Click for details',
+    /* Loading */
+    ldgData:'Loading data...', ldgConnect:'Connecting...',
+    ldgDelete:'Deleting...', ldgSave:'Saving...',
+    ldgPhotos:'Loading photos...', ldgPDF:'Creating PDF...',
+    ldgCompress:(n)=>`Compressing ${n} photo(s)...`,
+    ldgProcess:(i,n)=>`Processing item ${i} of ${n}...`,
+    ldgExcelLoad:'Loading ExcelJS...', ldgFileCreate:'Creating file...',
+    ldgPhotosLoad:(i,n)=>`Loading photos ${i}/${n}...`,
+    ldgPrepare:'Preparing...',
+    /* PDF strings */
+    pdfTitle:'Construction Rework',
+    pdfFilterAll:'All Items', pdfFilterOpen:'Open Only',
+    pdfPoints:(n)=>`${n} Items`,
+    pdfFloor:'Floor: ', pdfResp:'Responsible: ', pdfRecBy:'Rec. by: ', pdfDue:'Due: ',
+    pdfCritical:'● Critical', pdfNonCritical:'● Non-Critical',
+    pdfDone:'✓ Done', pdfOverdueStatus:'⚠ Overdue', pdfStatusOpen:'Open',
+    pdfNoPos:'No position', pdfNoFloor:'No floor plan',
+    pdfPhotosLabel:'Photos:', pdfPage:(p,t)=>`Page ${p} of ${t}`,
+    /* Excel headers */
+    xlNr:'No.', xlTitle:'Title', xlCat:'Category', xlStatus:'Status',
+    xlFloor:'Floor', xlResp:'Responsible', xlRecBy:'Rec. by',
+    xlDue:'Due', xlDesc:'Description', xlPos:'Position',
+    xlPhoto:(n)=>`Photo ${n}`, xlFirma:'Company',
+    xlRecByFull:'Recorded by', xlDueFull:'Due date',
+    xlCreated:'Created at', xlPhotos:'Photos',
+    xlCritical:'Critical', xlNonCritical:'Non-Critical',
+    xlOpen:'Open', xlOverdue:'Open (overdue)', xlDone:'Done',
+    xlSheetAll:'All Items', xlSheetOpen:'Open Items',
+    /* Filenames */
+    fileOpen:'Open', fileAll:'All',
+    /* Alerts */
+    alertNoItems:'No items to export.',
+    alertTitleReq:'Please enter a title', alertFloorReq:'Please select a floor',
+    alertNameReq:'Please enter a name',
+    alertSaveErr:'Error: ', alertExcelErr:'Excel export error: ',
+    alertFloorSaveErr:'Save error: ',
+    resetConfirm:'Reset Supabase connection?',
+  }
+};
+
+function t(key, ...args) {
+  const val = LANG[currentLang]?.[key] ?? LANG.de[key];
+  if (typeof val === 'function') return val(...args);
+  return val ?? key;
+}
+
+function toggleLang() {
+  currentLang = currentLang === 'de' ? 'en' : 'de';
+  try { localStorage.setItem('lang', currentLang); } catch {}
+  applyLang();
+  // Re-render active view
+  const active = document.querySelector('.view.active');
+  if (active) {
+    const name = active.id.replace('view-', '');
+    showView(name);
+  }
+}
+
+function applyLang() {
+  // Sidebar
+  const brand = document.querySelector('.sidebar-brand');
+  if (brand) brand.innerHTML = t('sidebarBrand');
+  const topBrand = document.querySelector('.topbar-brand');
+  if (topBrand) topBrand.textContent = t('topbarBrand');
+  const navLinks = document.querySelectorAll('.nav-link');
+  const navKeys = ['navDashboard','navListe','navNeu','navEtagen','navVerantwortliche'];
+  navLinks.forEach((el,i)=>{ if(navKeys[i]) el.innerHTML = t(navKeys[i]); });
+  const logoutBtn = document.querySelector('.sidebar-logout');
+  if (logoutBtn) logoutBtn.textContent = t('navLogout');
+  const langBtn = document.getElementById('lang-btn');
+  if (langBtn) langBtn.textContent = t('langToggle');
+
+  // Login
+  const lTitle = document.querySelector('.login-title');
+  if (lTitle) lTitle.textContent = t('appTitle');
+  const lSub = document.querySelector('.login-sub');
+  if (lSub) lSub.textContent = t('loginSub');
+  const lErr = document.getElementById('login-error');
+  if (lErr) lErr.textContent = t('loginError');
+  const lBtn = document.querySelector('#login-screen button.btn-primary');
+  if (lBtn) lBtn.textContent = t('loginBtn');
+  // Login labels
+  const loginLabels = document.querySelectorAll('#login-screen .form-group label');
+  if (loginLabels[0]) loginLabels[0].textContent = t('loginUserLabel');
+  if (loginLabels[1]) loginLabels[1].textContent = t('loginPwLabel');
+  const loginPwInput = document.getElementById('login-pw');
+  if (loginPwInput) loginPwInput.placeholder = t('loginPwPlaceholder');
+
+  // Form view (view-neu) — labels, hints, buttons, headings
+  const formLabels = document.querySelectorAll('#view-neu .form-group label');
+  if (formLabels[0]) formLabels[0].textContent = t('labelTitle');
+  if (formLabels[1]) formLabels[1].textContent = t('labelCat');
+  if (formLabels[2]) formLabels[2].textContent = t('labelDesc');
+  if (formLabels[3]) formLabels[3].textContent = t('labelFloor');
+  if (formLabels[4]) formLabels[4].textContent = t('labelResp');
+  if (formLabels[5]) formLabels[5].textContent = t('labelDue');
+  const fTitle = document.getElementById('f-titel');
+  if (fTitle) fTitle.placeholder = t('placeholderTitle');
+  const fDesc = document.getElementById('f-beschreibung');
+  if (fDesc) fDesc.placeholder = t('placeholderDesc');
+  const posH2 = document.querySelector('#plan-section h2');
+  if (posH2) posH2.textContent = t('posHeading');
+  const posHint = document.querySelector('#plan-section .plan-hint');
+  if (posHint) posHint.textContent = t('posHint');
+  const photosH2 = document.querySelector('#view-neu .card:last-of-type h2');
+  // Handle photos heading separately
+  const allCardH2 = document.querySelectorAll('#view-neu .card h2');
+  allCardH2.forEach(h2 => {
+    if (h2.textContent.includes('Fotos') || h2.textContent.includes('Photos')) {
+      h2.textContent = t('photosHeading');
+      const hint = h2.nextElementSibling;
+      if (hint && hint.tagName === 'P') hint.textContent = t('photosHint');
+    }
+    if (h2.textContent.includes('Position') || h2.textContent.includes('position')) {
+      h2.textContent = t('posHeading');
+    }
+  });
+  // Camera/Gallery buttons
+  document.querySelectorAll('#view-neu .btn-ghost').forEach(btn => {
+    if (btn.textContent.includes('Kamera') || btn.textContent.includes('Camera')) btn.textContent = t('btnCamera');
+    if (btn.textContent.includes('Galerie') || btn.textContent.includes('Gallery')) btn.textContent = t('btnGallery');
+  });
+  // Cancel/Save buttons in form
+  const formBtns = document.querySelectorAll('#view-neu > div:last-of-type button');
+  formBtns.forEach(btn => {
+    if (btn.classList.contains('btn-ghost')) btn.textContent = t('btnCancel');
+    if (btn.id === 'save-btn') btn.textContent = t('btnSave');
+  });
+  // No-plan section
+  const noPlanP = document.querySelector('#no-plan-section p');
+  if (noPlanP) noPlanP.innerHTML = t('noFloorPlan') + ` <span style="cursor:pointer;color:var(--primary);text-decoration:underline" onclick="showView('etagen')">${t('uploadNow')}</span>`;
+
+  // Cancel button in card-header of view-neu
+  const cancelHeaderBtn = document.querySelector('#view-neu .card-header button');
+  if (cancelHeaderBtn) cancelHeaderBtn.textContent = '✕ ' + t('btnCancel');
+
+  // Export controls
+  const expContent = document.getElementById('exp-content');
+  if (expContent) {
+    const opts = expContent.options;
+    if (opts[0]) opts[0].text = t('expDaten');
+    if (opts[1]) opts[1].text = t('expPos');
+    if (opts[2]) opts[2].text = t('expFotos');
+    if (opts[3]) opts[3].text = t('expFotosPos');
+  }
+  const expFormat = document.getElementById('exp-format');
+  if (expFormat) {
+    const opts = expFormat.options;
+    if (opts[0]) opts[0].text = t('expPDF');
+    if (opts[1]) opts[1].text = t('expExcel');
+  }
+  const expFilter = document.getElementById('exp-filter');
+  if (expFilter) {
+    const opts = expFilter.options;
+    if (opts[0]) opts[0].text = t('expAll');
+    if (opts[1]) opts[1].text = t('expOnlyOpen');
+  }
+  const expLabel = document.querySelector('[data-exp-label]');
+  if (expLabel) expLabel.textContent = t('expLabel');
+  const expBtn = document.querySelector('[data-exp-btn]');
+  if (expBtn) expBtn.textContent = t('expDownload');
+
+  // Etagen modal
+  const ePlanLabel = document.querySelector('#modal-etage .form-group:last-of-type label');
+  if (ePlanLabel) ePlanLabel.textContent = t('floorPlanLabel');
+
+  // html[lang]
+  document.documentElement.lang = currentLang;
+}
+
 // ===================== LOGIN =====================
 const USERS = { steffen: 'Steffen2024!', sandra: 'Sandra2024!', detlef: 'Detlef2024!' };
 
@@ -565,6 +984,7 @@ function doLogin() {
   const err = document.getElementById('login-error');
   err.style.display = 'none';
   if (!pw || pw !== USERS[user]) {
+    err.textContent = t('loginError');
     err.style.display = 'block';
     document.getElementById('login-pw').value = '';
     return;
@@ -594,7 +1014,7 @@ function closeSidebar() {
 }
 
 function logout() {
-  if (!confirm('Abmelden?')) return;
+  if (!confirm(t('confirmLogout'))) return;
   storageDel('auth-user');
   location.reload();
 }
@@ -644,7 +1064,7 @@ async function connectSupabase() {
   if (!url || !key) { errEl.textContent = '❌ Bitte URL und Key eingeben'; errEl.style.display = 'block'; return; }
   if (!url.startsWith('https://') || !url.includes('supabase.co')) { errEl.textContent = '❌ URL ungültig — muss mit https://....supabase.co enden'; errEl.style.display = 'block'; return; }
 
-  showLoading('Verbinden...');
+  showLoading(t('ldgConnect'));
   try {
     const { createClient } = supabase;
     sb = createClient(url, key);
@@ -663,7 +1083,7 @@ async function connectSupabase() {
 }
 
 function resetConfig() {
-  if (!confirm('Supabase-Verbindung zurücksetzen?')) return;
+  if (!confirm(t('resetConfirm'))) return;
   storageDel('sb-url'); storageDel('sb-key');
   document.getElementById('main-app').style.display = 'none';
   document.getElementById('config-screen').style.display = 'flex';
@@ -688,10 +1108,11 @@ async function ensureTeamContacts() {
 async function startApp() {
   document.getElementById('config-screen').style.display = 'none';
   document.getElementById('main-app').style.display = 'block';
-  showLoading('Daten laden...');
+  showLoading(t('ldgData'));
   await loadAll();
   await ensureTeamContacts();
   hideLoading();
+  applyLang();
   showView('liste');
 }
 
@@ -738,11 +1159,11 @@ function renderStats() {
   const today = new Date(); today.setHours(0,0,0,0);
   const overdue = allPunkte.filter(p => p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today).length;
   document.getElementById('stats-container').innerHTML = `
-    <div class="stat-card"><div class="stat-number" style="color:var(--primary)">${total}</div><div class="stat-label">Gesamt</div></div>
-    <div class="stat-card"><div class="stat-number" style="color:var(--danger)">${critical}</div><div class="stat-label">Critical</div></div>
-    <div class="stat-card"><div class="stat-number" style="color:var(--warning)">${open}</div><div class="stat-label">Offen</div></div>
-    <div class="stat-card"><div class="stat-number" style="color:var(--success)">${done}</div><div class="stat-label">Erledigt</div></div>
-    ${overdue>0?`<div class="stat-card"><div class="stat-number" style="color:var(--danger)">${overdue}</div><div class="stat-label">Überfällig</div></div>`:''}
+    <div class="stat-card"><div class="stat-number" style="color:var(--primary)">${total}</div><div class="stat-label">${t('statTotal')}</div></div>
+    <div class="stat-card"><div class="stat-number" style="color:var(--danger)">${critical}</div><div class="stat-label">${t('statCritical')}</div></div>
+    <div class="stat-card"><div class="stat-number" style="color:var(--warning)">${open}</div><div class="stat-label">${t('statOpen')}</div></div>
+    <div class="stat-card"><div class="stat-number" style="color:var(--success)">${done}</div><div class="stat-label">${t('statDone')}</div></div>
+    ${overdue>0?`<div class="stat-card"><div class="stat-number" style="color:var(--danger)">${overdue}</div><div class="stat-label">${t('statOverdue')}</div></div>`:''}
   `;
 }
 
@@ -765,7 +1186,10 @@ function renderListe() {
   });
 
   const container = document.getElementById('punkte-liste');
-  if (!filtered.length) { container.innerHTML = `<div class="empty-state"><div class="icon">📋</div><p>Keine Punkte gefunden</p></div>`; return; }
+  // Update list title
+  const listH1 = document.querySelector('#view-liste .card-header h1');
+  if (listH1) listH1.textContent = t('listTitle');
+  if (!filtered.length) { container.innerHTML = `<div class="empty-state"><div class="icon">📋</div><p>${t('noItems')}</p></div>`; return; }
 
   const today = new Date(); today.setHours(0,0,0,0);
   container.innerHTML = filtered.map(p => {
@@ -779,14 +1203,14 @@ function renderListe() {
           <div class="punkt-title">${esc(p.titel)}</div>
           ${p.beschreibung?`<div style="font-size:0.85rem;color:var(--muted);margin-top:2px">${esc(p.beschreibung.substring(0,120))}${p.beschreibung.length>120?'...':''}</div>`:''}
           <div class="punkt-meta">
-            <span class="badge badge-${p.kategorie}">${p.kategorie==='critical'?'🔴 Critical':'⚫ Non-Critical'}</span>
-            <span class="badge badge-${p.status}">${p.status==='open'?'Offen':'Erledigt'}</span>
+            <span class="badge badge-${p.kategorie}">${p.kategorie==='critical'?t('catCritical'):t('catNonCritical')}</span>
+            <span class="badge badge-${p.status}">${p.status==='open'?t('statusOpen'):t('statusDone')}</span>
             ${etage?`<span class="tag">🏢 ${esc(etage.name)}</span>`:''}
             ${contact?`<span class="tag">👷 ${esc(contact.name)}</span>`:''}
             ${p.due_date?`<span class="tag" style="${overdue?'color:var(--danger);font-weight:600':''}">📅 ${fmtDate(p.due_date)}${overdue?' ⚠️':''}</span>`:''}
             ${p.foto_count?`<span class="tag">📷 ${p.foto_count}</span>`:''}
-            ${p.aufgenommen_von?`<span class="tag">✍️ ${esc(p.aufgenommen_von)}</span>`:''}
-            <span style="color:var(--muted);font-size:0.75rem">Eingetragen: ${fmtDateTime(p.erstellt)}</span>
+            ${p.aufgenommen_von?`<span class="tag">${t('recordedByIcon')} ${esc(p.aufgenommen_von)}</span>`:''}
+            <span style="color:var(--muted);font-size:0.75rem">${t('enteredOn')} ${fmtDateTime(p.erstellt)}</span>
           </div>
         </div>
       </div>`;
@@ -795,14 +1219,23 @@ function renderListe() {
 
 function populateFilters() {
   const eEl=document.getElementById('filter-etage'),eV=eEl.value;
-  eEl.innerHTML='<option value="">Alle Etagen</option>'+allEtagen.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join(''); eEl.value=eV;
+  eEl.innerHTML=`<option value="">${t('allFloors')}</option>`+allEtagen.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join(''); eEl.value=eV;
+  // Filter kategorie options
+  const kEl=document.getElementById('filter-kategorie');
+  if(kEl){const kV=kEl.value;kEl.innerHTML=`<option value="">${t('allCats')}</option><option value="critical">${t('catCritical')}</option><option value="noncritical">${t('catNonCritical')}</option>`;kEl.value=kV;}
+  // Filter status options
+  const sEl=document.getElementById('filter-status');
+  if(sEl){const sV=sEl.value;sEl.innerHTML=`<option value="">${t('allStatus')}</option><option value="open">${t('statusOpen')}</option><option value="done">${t('statusDone')}</option>`;sEl.value=sV;}
+  // Search placeholder
+  const srEl=document.getElementById('filter-search');
+  if(srEl) srEl.placeholder=t('searchPlaceholder');
   const vEl=document.getElementById('filter-verantwortlicher'),vV=vEl.value;
   const team  = allContacts.filter(c => c.firma === 'Team');
   const other = allContacts.filter(c => c.firma !== 'Team');
   const opt   = c => `<option value="${c.id}">${esc(c.name)}</option>`;
-  vEl.innerHTML = `<option value="">Alle Verantwortlichen</option>` +
-    (team.length  ? `<optgroup label="👥 Team">${team.map(opt).join('')}</optgroup>` : '') +
-    (other.length ? `<optgroup label="👷 Externe">${other.map(opt).join('')}</optgroup>` : '');
+  vEl.innerHTML = `<option value="">${t('allResp')}</option>` +
+    (team.length  ? `<optgroup label="${t('groupTeam')}">${team.map(opt).join('')}</optgroup>` : '') +
+    (other.length ? `<optgroup label="${t('groupExternal')}">${other.map(opt).join('')}</optgroup>` : '');
   vEl.value=vV;
 }
 
@@ -815,13 +1248,13 @@ async function openDetail(id) {
 
   document.getElementById('detail-title').textContent = `#${p.nummer} – ${p.titel}`;
   document.getElementById('detail-badges').innerHTML = `
-    <span class="badge badge-${p.kategorie}">${p.kategorie==='critical'?'🔴 Critical':'⚫ Non-Critical'}</span>
-    <span class="badge badge-${p.status}">${p.status==='open'?'Offen':'Erledigt'}</span>`;
+    <span class="badge badge-${p.kategorie}">${p.kategorie==='critical'?t('catCritical'):t('catNonCritical')}</span>
+    <span class="badge badge-${p.status}">${p.status==='open'?t('statusOpen'):t('statusDone')}</span>`;
 
   const today=new Date(); today.setHours(0,0,0,0);
   const overdue=p.status==='open'&&p.due_date&&new Date(p.due_date+'T00:00:00')<today;
 
-  showLoading('Fotos laden...');
+  showLoading(t('ldgPhotos'));
   let fotos=[];
   try {
     const {data}=await sb.from('photos').select('base64').eq('punkt_id',id).order('idx');
@@ -830,34 +1263,36 @@ async function openDetail(id) {
   hideLoading();
 
   const planHtml=etage?.plan_base64&&p.loc_x!=null?`
-    <div class="detail-section"><h3>Position auf Grundriss</h3>
+    <div class="detail-section"><h3>${t('detPosition')}</h3>
       <div class="detail-plan"><img src="${etage.plan_base64}" alt="Grundriss">
         <div class="plan-pin" style="left:${p.loc_x}%;top:${p.loc_y}%;display:block">📍</div>
       </div></div>`:'';
-  const fotosHtml=fotos.length?`<div class="detail-section"><h3>Fotos (${fotos.length})</h3>
+  const fotosHtml=fotos.length?`<div class="detail-section"><h3>${t('detPhotos')} (${fotos.length})</h3>
     <div class="photo-grid">${fotos.map(b=>`<div class="photo-thumb"><img src="${b}" onclick="showFullPhoto('${b}')"></div>`).join('')}</div></div>`:'';
 
   document.getElementById('detail-content').innerHTML=`
     <div class="detail-section"><h3>Details</h3>
       <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:0.9rem;line-height:1.8">
-        ${etage?`<div><strong>Etage:</strong> ${esc(etage.name)}</div>`:''}
-        ${contact?`<div><strong>Verantwortlicher:</strong> ${esc(contact.name)}${contact.firma?` (${esc(contact.firma)})`:''}  </div>`:''}
-        ${p.due_date?`<div><strong>Fällig:</strong> <span style="${overdue?'color:var(--danger);font-weight:600':''}">${fmtDate(p.due_date)}${overdue?' ⚠️ Überfällig':''}</span></div>`:''}
-        ${p.aufgenommen_von?`<div><strong>Aufgenommen von:</strong> ✍️ ${esc(p.aufgenommen_von)}</div>`:''}
-        <div><strong>Eingetragen:</strong> ${fmtDateTime(p.erstellt)}</div>
+        ${etage?`<div><strong>${t('detFloor')}</strong> ${esc(etage.name)}</div>`:''}
+        ${contact?`<div><strong>${t('detResp')}</strong> ${esc(contact.name)}${contact.firma?` (${esc(contact.firma)})`:''}  </div>`:''}
+        ${p.due_date?`<div><strong>${t('detDue')}</strong> <span style="${overdue?'color:var(--danger);font-weight:600':''}">${fmtDate(p.due_date)}${overdue?' '+t('detOverdue'):''}</span></div>`:''}
+        ${p.aufgenommen_von?`<div><strong>${t('detRecBy')}</strong> ✍️ ${esc(p.aufgenommen_von)}</div>`:''}
+        <div><strong>${t('detCreated')}</strong> ${fmtDateTime(p.erstellt)}</div>
       </div></div>
-    ${p.beschreibung?`<div class="detail-section"><h3>Beschreibung</h3><p style="line-height:1.7;white-space:pre-wrap">${esc(p.beschreibung)}</p></div>`:''}
-    ${contact?`<div class="detail-section"><h3>Kontakt</h3><div style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.9rem">
+    ${p.beschreibung?`<div class="detail-section"><h3>${t('detDesc')}</h3><p style="line-height:1.7;white-space:pre-wrap">${esc(p.beschreibung)}</p></div>`:''}
+    ${contact?`<div class="detail-section"><h3>${t('detContact')}</h3><div style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.9rem">
       <div>👷 ${esc(contact.name)}</div>
       ${contact.phone?`<div>📞 <a href="tel:${esc(contact.phone)}">${esc(contact.phone)}</a></div>`:''}
       ${contact.email?`<div>✉️ <a href="mailto:${esc(contact.email)}">${esc(contact.email)}</a></div>`:''}
     </div></div>`:''}
     ${planHtml}${fotosHtml}`;
 
+  document.getElementById('detail-edit-btn').textContent=t('btnEdit');
   document.getElementById('detail-edit-btn').onclick=()=>{closeModal('modal-detail');editPunkt(id);};
   const doneBtn=document.getElementById('detail-done-btn');
-  doneBtn.textContent=p.status==='done'?'↩ Als offen markieren':'✓ Als erledigt markieren';
+  doneBtn.textContent=p.status==='done'?t('btnMarkOpen'):t('btnMarkDone');
   doneBtn.onclick=()=>toggleDone(id,p.status);
+  document.getElementById('detail-del-btn').textContent=t('btnDelete');
   document.getElementById('detail-del-btn').onclick=()=>deletePunkt(id);
   openModal('modal-detail');
 }
@@ -870,8 +1305,8 @@ async function toggleDone(id, cur) {
 }
 
 async function deletePunkt(id) {
-  if (!confirm('Diesen Punkt wirklich löschen?')) return;
-  showLoading('Löschen...');
+  if (!confirm(t('confirmDelete'))) return;
+  showLoading(t('ldgDelete'));
   await sb.from('photos').delete().eq('punkt_id',id);
   await sb.from('punkte').delete().eq('id',id);
   await refreshPunkte(); hideLoading(); closeModal('modal-detail'); renderListe();
@@ -880,7 +1315,7 @@ async function deletePunkt(id) {
 // ===================== FORM =====================
 function resetForm() {
   editingId=null; currentPhotos=[];
-  document.getElementById('form-title').textContent='Neuer Nacharbeitspunkt';
+  document.getElementById('form-title').textContent=t('formTitleNew');
   ['f-titel','f-beschreibung','f-loc-x','f-loc-y'].forEach(i=>document.getElementById(i).value='');
   document.getElementById('f-kategorie').value='critical';
   document.getElementById('f-duedate').value='';
@@ -898,15 +1333,15 @@ function buildContactOptions(placeholder) {
   const other = allContacts.filter(c => c.firma !== 'Team');
   const opt   = c => `<option value="${c.id}">${esc(c.name)}</option>`;
   return `<option value="">${placeholder}</option>` +
-    (team.length  ? `<optgroup label="👥 Team">${team.map(opt).join('')}</optgroup>` : '') +
-    (other.length ? `<optgroup label="👷 Externe">${other.map(opt).join('')}</optgroup>` : '');
+    (team.length  ? `<optgroup label="${t('groupTeam')}">${team.map(opt).join('')}</optgroup>` : '') +
+    (other.length ? `<optgroup label="${t('groupExternal')}">${other.map(opt).join('')}</optgroup>` : '');
 }
 
 function populateFormSelects() {
   const eEl=document.getElementById('f-etage'),eV=eEl.value;
-  eEl.innerHTML='<option value="">— Etage wählen —</option>'+allEtagen.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join(''); if(eV)eEl.value=eV;
+  eEl.innerHTML=`<option value="">${t('placeholderFloor')}</option>`+allEtagen.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join(''); if(eV)eEl.value=eV;
   const vEl=document.getElementById('f-verantwortlicher'),vV=vEl.value;
-  vEl.innerHTML=buildContactOptions('— Verantwortlichen wählen —'); if(vV)vEl.value=vV;
+  vEl.innerHTML=buildContactOptions(t('placeholderResp')); if(vV)vEl.value=vV;
 }
 
 function onEtageChange() {
@@ -937,7 +1372,7 @@ document.getElementById('plan-container').addEventListener('click',function(e){
 
 async function handleFotoUpload(event) {
   const files=Array.from(event.target.files); event.target.value='';
-  showLoading(`${files.length} Foto(s) komprimieren...`);
+  showLoading(t('ldgCompress', files.length));
   for(const file of files){
     const b64=await compressToBase64(file,1200,0.72);
     currentPhotos.push({base64:b64,isNew:true});
@@ -956,11 +1391,11 @@ function renderFotoPreview() {
 async function savePunkt() {
   const titel=document.getElementById('f-titel').value.trim();
   const etageId=document.getElementById('f-etage').value;
-  if(!titel){alert('Bitte Titel eingeben');return;}
-  if(!etageId){alert('Bitte Etage wählen');return;}
+  if(!titel){alert(t('alertTitleReq'));return;}
+  if(!etageId){alert(t('alertFloorReq'));return;}
 
   const btn=document.getElementById('save-btn'); btn.disabled=true;
-  showLoading('Speichern...');
+  showLoading(t('ldgSave'));
   try{
     const locX=document.getElementById('f-loc-x').value;
     const locY=document.getElementById('f-loc-y').value;
@@ -998,26 +1433,26 @@ async function savePunkt() {
     // Delete old photos, insert new
     await sb.from('photos').delete().eq('punkt_id',punktId);
     for(let i=0;i<currentPhotos.length;i++){
-      showLoading(`Foto ${i+1}/${currentPhotos.length} speichern...`);
+      showLoading(t('ldgProcess', i+1, currentPhotos.length));
       await sb.from('photos').insert({punkt_id:punktId,idx:i,base64:currentPhotos[i].base64});
     }
 
     await refreshPunkte(); editingId=null; currentPhotos=[];
     hideLoading(); showView('liste');
   } catch(e){
-    hideLoading(); alert('Fehler: '+e.message);
+    hideLoading(); alert(t('alertSaveErr')+e.message);
   } finally{ btn.disabled=false; }
 }
 
 async function editPunkt(id) {
   const p=allPunkte.find(x=>x.id===id); if(!p)return;
   editingId=id;
-  showLoading('Fotos laden...');
+  showLoading(t('ldgPhotos'));
   const {data}=await sb.from('photos').select('base64').eq('punkt_id',id).order('idx');
   currentPhotos=(data||[]).map(r=>({base64:r.base64,isNew:false}));
   hideLoading();
   populateFormSelects();
-  document.getElementById('form-title').textContent=`Punkt #${p.nummer} bearbeiten`;
+  document.getElementById('form-title').textContent=t('formTitleEdit').replace('{n}', p.nummer);
   document.getElementById('f-titel').value=p.titel;
   document.getElementById('f-kategorie').value=p.kategorie;
   document.getElementById('f-beschreibung').value=p.beschreibung||'';
@@ -1038,13 +1473,18 @@ function cancelEdit(){editingId=null;currentPhotos=[];showView('liste');}
 // ===================== ETAGEN =====================
 function renderEtagen() {
   const container=document.getElementById('etagen-liste');
-  if(!allEtagen.length){container.innerHTML=`<div class="empty-state"><div class="icon">🏢</div><p>Noch keine Etagen angelegt.</p></div>`;return;}
+  // Update view title
+  const floorsH1 = document.querySelector('#view-etagen .card-header h1');
+  if (floorsH1) floorsH1.textContent = t('floorsTitle');
+  const floorsNewBtn = document.querySelector('#view-etagen .card-header button');
+  if (floorsNewBtn) floorsNewBtn.textContent = t('floorsNewBtn');
+  if(!allEtagen.length){container.innerHTML=`<div class="empty-state"><div class="icon">🏢</div><p>${t('floorEmpty')}</p></div>`;return;}
   container.innerHTML=allEtagen.map(e=>{
     const count=allPunkte.filter(p=>p.etage_id===e.id).length;
     return `<div class="floor-card">
       <div class="floor-thumb-wrap">${e.plan_base64?`<img src="${e.plan_base64}" alt="">`:'<span style="font-size:1.5rem">📋</span>'}</div>
       <div style="flex:1"><div style="font-weight:600">${esc(e.name)}</div>
-        <div style="font-size:0.85rem;color:var(--muted);margin-top:3px">${count} Punkt${count!==1?'e':''}</div></div>
+        <div style="font-size:0.85rem;color:var(--muted);margin-top:3px">${t('floorPoints',count)}</div></div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-ghost btn-sm" onclick="openEtageModal('${e.id}')">✏️</button>
         <button class="btn btn-danger btn-sm" onclick="deleteEtage('${e.id}')">🗑️</button>
@@ -1055,7 +1495,7 @@ function renderEtagen() {
 function openEtageModal(id) {
   editingEtageId=id||null; pendingEtagePlanBase64=null;
   document.getElementById('e-name').value=''; document.getElementById('e-plan').value=''; document.getElementById('e-plan-preview').innerHTML='';
-  document.getElementById('etage-modal-title').textContent=id?'Etage bearbeiten':'Neue Etage';
+  document.getElementById('etage-modal-title').textContent=id?t('floorModalEdit'):t('floorModalNew');
   if(id){const e=allEtagen.find(x=>x.id===id);if(e){document.getElementById('e-name').value=e.name;if(e.plan_base64){pendingEtagePlanBase64=e.plan_base64;document.getElementById('e-plan-preview').innerHTML=`<img src="${e.plan_base64}" style="max-height:120px;border-radius:6px;margin-top:6px">`;} }}
   openModal('modal-etage');
 }
@@ -1065,7 +1505,7 @@ async function previewEtagePlan(event) {
   document.getElementById('pdf-page-picker').style.display='none';
   document.getElementById('e-plan-preview').innerHTML='';
   if(file.type==='application/pdf') {
-    showLoading('PDF laden...');
+    showLoading(t('ldgPDF'));
     try {
       await renderPdfPicker(file);
     } catch(e) {
@@ -1073,7 +1513,7 @@ async function previewEtagePlan(event) {
       alert('PDF konnte nicht geladen werden: '+e.message);
     }
   } else {
-    showLoading('Grundriss komprimieren...');
+    showLoading(currentLang==='de'?'Grundriss komprimieren...':'Compressing floor plan...');
     pendingEtagePlanBase64=await compressToBase64(file,1800,0.82);
     hideLoading();
     document.getElementById('e-plan-preview').innerHTML=`<img src="${pendingEtagePlanBase64}" style="max-height:120px;border-radius:6px;margin-top:6px">`;
@@ -1102,12 +1542,12 @@ async function renderPdfPicker(file) {
 
     const div=document.createElement('div');
     div.style.cssText='cursor:pointer;border:2px solid var(--border);border-radius:8px;overflow:hidden;transition:border-color 0.15s;';
-    div.title=`Seite ${i} verwenden`;
-    div.innerHTML=`<img src="${thumb}" style="width:100%;display:block"><div style="text-align:center;font-size:0.75rem;padding:4px;background:var(--bg);color:var(--muted)">Seite ${i}</div>`;
+    div.title=t('floorPage',i);
+    div.innerHTML=`<img src="${thumb}" style="width:100%;display:block"><div style="text-align:center;font-size:0.75rem;padding:4px;background:var(--bg);color:var(--muted)">${t('floorPage',i)}</div>`;
     div.onclick=async ()=>{
       grid.querySelectorAll('div').forEach(d=>d.style.borderColor='var(--border)');
       div.style.borderColor='var(--primary)';
-      showLoading(`Seite ${i} rendern...`);
+      showLoading(currentLang==='de'?`Seite ${i} rendern...`:`Rendering page ${i}...`);
       const fullPage=await pdf.getPage(i);
       const fullVp=fullPage.getViewport({scale:2.0});
       const fc=document.createElement('canvas');
@@ -1126,13 +1566,16 @@ async function renderPdfPicker(file) {
   }
 
   // Auto-select page 1
+  // Update "Seite auswählen" label
+  const pickTitle = document.querySelector('#pdf-page-picker p');
+  if (pickTitle) pickTitle.textContent = t('floorSelectPage');
   if(numPages>=1) grid.firstChild?.click();
 }
 
 async function saveEtage() {
-  const name=document.getElementById('e-name').value.trim(); if(!name){alert('Bitte Name eingeben');return;}
+  const name=document.getElementById('e-name').value.trim(); if(!name){alert(t('alertNameReq'));return;}
   const btn=document.getElementById('etage-save-btn'); btn.disabled=true;
-  showLoading('Speichern...');
+  showLoading(t('ldgSave'));
   try{
     const data={name,plan_base64:pendingEtagePlanBase64||null};
     if(editingEtageId){
@@ -1149,13 +1592,13 @@ async function saveEtage() {
     closeModal('modal-etage'); renderEtagen(); populateFormSelects();
   } catch(e) {
     hideLoading(); btn.disabled=false;
-    alert('Fehler beim Speichern: '+(e.message||JSON.stringify(e)));
+    alert(t('alertFloorSaveErr')+(e.message||JSON.stringify(e)));
   }
 }
 
 async function deleteEtage(id) {
   const count=allPunkte.filter(p=>p.etage_id===id).length;
-  if(count>0&&!confirm(`Diese Etage hat ${count} Punkt(e). Trotzdem löschen?`))return;
+  if(count>0&&!confirm(t('floorDeleteConfirm',count)))return;
   await sb.from('etagen').delete().eq('id',id);
   allEtagen=allEtagen.filter(e=>e.id!==id);
   renderEtagen();
@@ -1164,7 +1607,12 @@ async function deleteEtage(id) {
 // ===================== CONTACTS =====================
 function renderContacts() {
   const container=document.getElementById('contacts-liste');
-  if(!allContacts.length){container.innerHTML=`<div class="empty-state"><div class="icon">👷</div><p>Noch keine Verantwortlichen.</p></div>`;return;}
+  // Update view title
+  const cH1 = document.querySelector('#view-verantwortliche .card-header h1');
+  if (cH1) cH1.textContent = t('contactsTitle');
+  const cNewBtn = document.querySelector('#view-verantwortliche .card-header button');
+  if (cNewBtn) cNewBtn.textContent = t('contactsNewBtn');
+  if(!allContacts.length){container.innerHTML=`<div class="empty-state"><div class="icon">👷</div><p>${t('contactEmpty')}</p></div>`;return;}
   container.innerHTML=allContacts.map(c=>`
     <div class="contact-card">
       <div class="contact-avatar">${c.name.charAt(0).toUpperCase()}</div>
@@ -1179,13 +1627,13 @@ function renderContacts() {
 function openContactModal(id) {
   editingContactId=id||null;
   ['c-name','c-phone','c-email','c-firma'].forEach(x=>document.getElementById(x).value='');
-  document.getElementById('contact-modal-title').textContent=id?'Verantwortlichen bearbeiten':'Neuer Verantwortlicher';
+  document.getElementById('contact-modal-title').textContent=id?t('contactModalEdit'):t('contactModalNew');
   if(id){const c=allContacts.find(x=>x.id===id);if(c){document.getElementById('c-name').value=c.name;document.getElementById('c-phone').value=c.phone||'';document.getElementById('c-email').value=c.email||'';document.getElementById('c-firma').value=c.firma||'';}}
   openModal('modal-contact');
 }
 
 async function saveContact() {
-  const name=document.getElementById('c-name').value.trim(); if(!name){alert('Bitte Name eingeben');return;}
+  const name=document.getElementById('c-name').value.trim(); if(!name){alert(t('alertNameReq'));return;}
   const btn=document.getElementById('contact-save-btn'); btn.disabled=true;
   const data={name,phone:document.getElementById('c-phone').value.trim(),email:document.getElementById('c-email').value.trim(),firma:document.getElementById('c-firma').value.trim()};
   if(editingContactId){
@@ -1199,7 +1647,7 @@ async function saveContact() {
 }
 
 async function deleteContact(id) {
-  if(!confirm('Verantwortlichen wirklich löschen?'))return;
+  if(!confirm(t('contactDeleteConfirm')))return;
   await sb.from('contacts').delete().eq('id',id);
   allContacts=allContacts.filter(c=>c.id!==id); renderContacts();
 }
@@ -1214,8 +1662,11 @@ document.addEventListener('mousemove', e => {
 async function renderDashboard() {
   const container = document.getElementById('dashboard-content');
   const etagesWithPlan = allEtagen.filter(e => e.plan_base64);
+  // Update dashboard title
+  const dbH1 = document.querySelector('#view-dashboard .card-header h1');
+  if (dbH1) dbH1.textContent = t('dashTitle');
   if (!etagesWithPlan.length) {
-    container.innerHTML = '<div class="db-empty">🗺️ Noch keine Grundrisse hochgeladen.<br>Gehe zu <strong>Etagen</strong> um Pläne hinzuzufügen.</div>';
+    container.innerHTML = `<div class="db-empty">${t('dashNoPlans')}</div>`;
     return;
   }
   renderBurndown();
@@ -1229,10 +1680,10 @@ async function renderDashboard() {
       <div class="db-section">
         <div class="db-plan-header">
           <h2>🏢 ${esc(etage.name)}</h2>
-          <span class="tag">${pts.length} Punkt${pts.length !== 1 ? 'e' : ''} gesamt</span>
-          ${open ? `<span class="badge badge-open">${open} offen</span>` : ''}
-          ${done ? `<span class="badge badge-done">${done} erledigt</span>` : ''}
-          ${pts.length - located.length > 0 ? `<span class="tag" style="color:var(--muted)">${pts.length - located.length} ohne Position</span>` : ''}
+          <span class="tag">${t('dashTotal',pts.length)}</span>
+          ${open ? `<span class="badge badge-open">${t('dashOpen',open)}</span>` : ''}
+          ${done ? `<span class="badge badge-done">${t('dashDone',done)}</span>` : ''}
+          ${pts.length - located.length > 0 ? `<span class="tag" style="color:var(--muted)">${t('dashNoPos',pts.length-located.length)}</span>` : ''}
         </div>
         <div class="db-wrap" id="wrap-${etage.id}">
           <img src="${etage.plan_base64}" alt="${esc(etage.name)}" draggable="false">
@@ -1266,7 +1717,7 @@ async function renderBurndown() {
   if (!sec) return;
 
   if (!allPunkte.length) {
-    sec.innerHTML = `<div class="card"><h2 style="margin-bottom:12px">📉 Burn Down</h2><div class="db-empty">Noch keine Punkte vorhanden.</div></div>`;
+    sec.innerHTML = `<div class="card"><h2 style="margin-bottom:12px">${t('bdTitle')}</h2><div class="db-empty">${t('bdEmpty')}</div></div>`;
     return;
   }
 
@@ -1302,7 +1753,7 @@ async function renderBurndown() {
 
   for (let d = new Date(startDate); d <= endDate; d.setTime(d.getTime() + STEP*86400000)) {
     const snap = new Date(d);
-    labels.push(snap.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'}));
+    labels.push(snap.toLocaleDateString(currentLang==='de'?'de-DE':'en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}));
 
     const scope = allPunkte.filter(p => new Date(p.erstellt) <= snap).length;
     scopeData.push(scope);
@@ -1331,30 +1782,31 @@ async function renderBurndown() {
   }
 
   // Today-Marker (finde nächsten Index)
-  const todayLabel = today.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'});
+  const todayLabel = today.toLocaleDateString(currentLang==='de'?'de-DE':'en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'});
   const todayIdx = labels.indexOf(todayLabel);
   if (todayIdx >= 0 && !hasCloseData) openHistData[todayIdx] = openCount;
 
+  const locale = currentLang === 'de' ? 'de-DE' : 'en-GB';
   const fcText = openCount === 0
-    ? '🎉 Alle Punkte erledigt!'
+    ? t('bdAllDone')
     : forecastDate
-      ? `Voraussichtliches Ende: <strong>${forecastDate.toLocaleDateString('de-DE')}</strong> (in ~${Math.ceil((forecastDate-today)/86400000)} Tagen) · Tempo: ${velocity.toFixed(2)} Punkte/Tag`
-      : 'Noch keine Punkte erledigt — kein Trend berechenbar';
+      ? t('bdForecastText', forecastDate.toLocaleDateString(locale), Math.ceil((forecastDate-today)/86400000), velocity.toFixed(2))
+      : t('bdNoTrend');
 
   sec.innerHTML = `
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:16px">
-        <h2>📉 Burn Down</h2>
+        <h2>${t('bdTitle')}</h2>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <div class="stat-card" style="padding:10px 16px;text-align:center;min-width:80px"><div class="stat-number" style="font-size:1.5rem;color:var(--primary)">${openCount}</div><div class="stat-label">Offen</div></div>
-          <div class="stat-card" style="padding:10px 16px;text-align:center;min-width:80px"><div class="stat-number" style="font-size:1.5rem;color:#16a34a">${doneCount}</div><div class="stat-label">Erledigt</div></div>
-          <div class="stat-card" style="padding:10px 16px;text-align:center;min-width:80px"><div class="stat-number" style="font-size:1.5rem;color:var(--danger)">${critOpen}</div><div class="stat-label">Critical offen</div></div>
+          <div class="stat-card" style="padding:10px 16px;text-align:center;min-width:80px"><div class="stat-number" style="font-size:1.5rem;color:var(--primary)">${openCount}</div><div class="stat-label">${t('bdOpen')}</div></div>
+          <div class="stat-card" style="padding:10px 16px;text-align:center;min-width:80px"><div class="stat-number" style="font-size:1.5rem;color:#16a34a">${doneCount}</div><div class="stat-label">${t('bdDone')}</div></div>
+          <div class="stat-card" style="padding:10px 16px;text-align:center;min-width:80px"><div class="stat-number" style="font-size:1.5rem;color:var(--danger)">${critOpen}</div><div class="stat-label">${t('bdCritical')}</div></div>
         </div>
       </div>
       <div style="font-size:0.85rem;color:var(--muted);margin-bottom:14px;padding:8px 12px;background:#fff8f8;border-radius:8px;border-left:3px solid var(--primary)">${fcText}</div>
       <div style="position:relative;height:280px"><canvas id="burndown-chart"></canvas></div>
       <div style="font-size:0.75rem;color:var(--muted);margin-top:8px;text-align:center">
-        ${!hasCloseData ? '💡 Tipp: Sobald Punkte als erledigt markiert werden, erscheint die tatsächliche Kurve.' : ''}
+        ${!hasCloseData ? t('bdTip') : ''}
       </div>
     </div>`;
 
@@ -1369,20 +1821,20 @@ async function renderBurndown() {
       labels,
       datasets: [
         {
-          label: 'Gesamt (Scope)',
+          label: t('bdScope'),
           data: scopeData,
           borderColor: '#888', backgroundColor: 'rgba(136,136,136,0.07)',
           borderWidth: 1.5, borderDash: [5,4], pointRadius: 0, fill: true, tension: 0.2, order: 3
         },
         {
-          label: 'Tatsächlich offen',
+          label: t('bdActual'),
           data: openHistData,
           borderColor: '#cc0000', backgroundColor: 'rgba(204,0,0,0.08)',
           borderWidth: 2.5, pointRadius: 3, pointBackgroundColor: '#cc0000',
           fill: false, tension: 0.3, spanGaps: false, order: 1
         },
         {
-          label: 'Prognose',
+          label: t('bdForecast'),
           data: forecastLineData,
           borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,0.06)',
           borderWidth: 2, borderDash: [7,5], pointRadius: 2, pointBackgroundColor: '#f97316',
@@ -1398,7 +1850,7 @@ async function renderBurndown() {
         tooltip: { callbacks: { label: item => `${item.dataset.label}: ${item.raw ?? '-'}` } }
       },
       scales: {
-        y: { beginAtZero: true, title: { display: true, text: 'Anzahl Punkte', font:{size:11} }, ticks: { precision: 0 }, grid: { color: 'rgba(0,0,0,0.05)' } },
+        y: { beginAtZero: true, title: { display: true, text: t('bdYLabel'), font:{size:11} }, ticks: { precision: 0 }, grid: { color: 'rgba(0,0,0,0.05)' } },
         x: { ticks: { maxTicksLimit: 10, font:{size:10} }, grid: { display: false } }
       }
     }
@@ -1425,7 +1877,7 @@ function renderAssigneeSummary() {
     .sort((a,b) => b[1].length - a[1].length)
     .map(([key, pts]) => {
       const contact  = allContacts.find(c => c.id === key);
-      const name     = contact?.name || 'Nicht zugewiesen';
+      const name     = contact?.name || t('asUnassigned');
       const isTeam   = contact?.firma === 'Team';
       const critical = pts.filter(p => p.kategorie === 'critical').length;
       const overdue  = pts.filter(p => p.due_date && new Date(p.due_date+'T00:00:00') < today).length;
@@ -1440,26 +1892,26 @@ function renderAssigneeSummary() {
           <div style="flex:1;min-width:0">
             <div style="font-weight:600;font-size:0.95rem">${esc(name)} ${isTeam?'<span style="font-size:0.72rem;background:rgba(204,0,0,0.1);color:var(--primary);padding:1px 7px;border-radius:999px;vertical-align:middle">Team</span>':contact?.firma?`<span style="font-size:0.75rem;color:var(--muted)">${esc(contact.firma)}</span>`:''}</div>
             <div style="font-size:0.8rem;color:var(--muted);margin-top:2px">
-              ${nextDue ? `📅 Nächste Fälligkeit: <strong style="${new Date(nextDue+'T00:00:00')<today?'color:var(--danger)':''}">${fmtDate(nextDue)}</strong>` : 'Kein Fälligkeitsdatum'}
-              &nbsp;·&nbsp; ${pct}% erledigt
+              ${nextDue ? `📅 ${t('asNextDue')} <strong style="${new Date(nextDue+'T00:00:00')<today?'color:var(--danger)':''}">${fmtDate(nextDue)}</strong>` : t('asNoDue')}
+              &nbsp;·&nbsp; ${t('asPct',pct)}
             </div>
             <div style="margin-top:6px;background:var(--bg);border-radius:999px;height:5px;width:100%;max-width:200px">
               <div style="height:5px;border-radius:999px;background:${pct===100?'#16a34a':'var(--primary)'};width:${pct}%"></div>
             </div>
           </div>
           <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
-            <span class="badge badge-open" style="font-size:0.78rem">${pts.length} offen</span>
-            ${critical?`<span class="badge badge-critical" style="font-size:0.78rem">${critical} critical</span>`:''}
-            ${overdue?`<span style="color:var(--danger);font-size:0.8rem;font-weight:700">⚠ ${overdue} überfällig</span>`:''}
+            <span class="badge badge-open" style="font-size:0.78rem">${t('asOpen',pts.length)}</span>
+            ${critical?`<span class="badge badge-critical" style="font-size:0.78rem">${t('asCritical',critical)}</span>`:''}
+            ${overdue?`<span style="color:var(--danger);font-size:0.8rem;font-weight:700">${t('asOverdue',overdue)}</span>`:''}
           </div>
         </div>`;
     }).join('');
 
   sec.innerHTML = `
     <div class="card">
-      <h2 style="margin-bottom:4px">👷 Offene Punkte je Verantwortlichem</h2>
-      <p style="font-size:0.82rem;color:var(--muted);margin-bottom:14px">${openPts.length} offene Punkte insgesamt</p>
-      ${rows || '<div class="db-empty">🎉 Alle Punkte sind erledigt!</div>'}
+      <h2 style="margin-bottom:4px">${t('asTitle')}</h2>
+      <p style="font-size:0.82rem;color:var(--muted);margin-bottom:14px">${t('asTotal',openPts.length)}</p>
+      ${rows || `<div class="db-empty">${t('asAllDone')}</div>`}
     </div>`;
 }
 
@@ -1473,14 +1925,14 @@ function showDotTooltip(event, id) {
     <div class="tt-num">Punkt #${p.nummer}</div>
     <div class="tt-title">${esc(p.titel)}</div>
     <div class="tt-meta">
-      <span class="badge badge-${p.kategorie}" style="font-size:0.7rem">${p.kategorie === 'critical' ? '🔴 Critical' : '⚫ Non-Critical'}</span>
-      <span class="badge badge-${p.status}" style="font-size:0.7rem">${p.status === 'open' ? 'Offen' : 'Erledigt'}</span>
+      <span class="badge badge-${p.kategorie}" style="font-size:0.7rem">${p.kategorie === 'critical' ? t('catCritical') : t('catNonCritical')}</span>
+      <span class="badge badge-${p.status}" style="font-size:0.7rem">${p.status === 'open' ? t('statusOpen') : t('statusDone')}</span>
     </div>
     ${contact ? `<div class="tt-extra">👷 ${esc(contact.name)}${contact.firma ? ` · ${esc(contact.firma)}` : ''}</div>` : ''}
-    ${p.due_date ? `<div class="tt-extra" style="${overdue ? 'color:var(--danger);font-weight:600' : ''}">📅 ${fmtDate(p.due_date)}${overdue ? ' ⚠️ Überfällig' : ''}</div>` : ''}
+    ${p.due_date ? `<div class="tt-extra" style="${overdue ? 'color:var(--danger);font-weight:600' : ''}">📅 ${fmtDate(p.due_date)}${overdue ? ' '+t('detOverdue') : ''}</div>` : ''}
     ${p.aufgenommen_von ? `<div class="tt-extra">✍️ ${esc(p.aufgenommen_von)}</div>` : ''}
     ${p.beschreibung ? `<div class="tt-extra" style="margin-top:5px;border-top:1px solid var(--border);padding-top:5px">${esc(p.beschreibung.substring(0, 90))}${p.beschreibung.length > 90 ? '…' : ''}</div>` : ''}
-    <div class="tt-extra" style="margin-top:4px;color:#94a3b8;font-size:0.72rem">Klicken für Details</div>`;
+    <div class="tt-extra" style="margin-top:4px;color:#94a3b8;font-size:0.72rem">${t('ttClick')}</div>`;
   tooltipEl.style.display = 'block';
   positionTooltip(event);
 }
@@ -1542,8 +1994,8 @@ function composeFloorplanWithDot(planBase64, locX, locY) {
 // ===================== PDF UNIVERSAL =====================
 async function exportPDFUniversal(filter, withPhotos, withPosition) {
   const pts = getExportRows(filter);
-  if (!pts.length) { alert('Keine Punkte zum Exportieren.'); return; }
-  showLoading('Vorbereiten...');
+  if (!pts.length) { alert(t('alertNoItems')); return; }
+  showLoading(t('ldgPrepare'));
 
   // Plandimensionen vorladen
   const planDims = {};
@@ -1559,7 +2011,7 @@ async function exportPDFUniversal(filter, withPhotos, withPosition) {
   const photosMap = {};
   if (withPhotos) {
     for (let i = 0; i < pts.length; i++) {
-      showLoading(`Fotos laden ${i+1}/${pts.length}...`);
+      showLoading(t('ldgPhotosLoad', i+1, pts.length));
       try {
         const { data } = await sb.from('photos').select('base64').eq('punkt_id', pts[i].id).order('idx');
         photosMap[pts[i].id] = (data || []).slice(0, 8).map(r => r.base64);
@@ -1567,7 +2019,7 @@ async function exportPDFUniversal(filter, withPhotos, withPosition) {
     }
   }
 
-  showLoading('PDF erstellen...');
+  showLoading(t('ldgPDF'));
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const PAGE_W = 210, PAGE_H = 297, MARGIN = 12, HEADER_H = 20, FOOTER_H = 10;
@@ -1578,16 +2030,17 @@ async function exportPDFUniversal(filter, withPhotos, withPosition) {
   const PHOTO_H = 26, PHOTO_SZ = 22;
   const today   = new Date(); today.setHours(0,0,0,0);
 
-  const titleMap = { '00':'Daten', '10':'Daten + Fotos', '01':'Daten + Positionen', '11':'Daten + Fotos + Positionen' };
+  const titleMap = { '00':t('expDaten'), '10':t('expFotos'), '01':t('expPos'), '11':t('expFotosPos') };
   const titleKey  = (withPhotos?'1':'0') + (withPosition?'1':'0');
+  const pdfLocale = currentLang === 'de' ? 'de-DE' : 'en-GB';
 
   function drawHeader() {
     doc.setFillColor(204,0,0); doc.rect(0,0,PAGE_W,HEADER_H,'F');
     doc.setTextColor(255,255,255);
     doc.setFontSize(12); doc.setFont('helvetica','bold');
-    doc.text('Hausbau Nacharbeit — ' + titleMap[titleKey], MARGIN, 13);
+    doc.text(t('pdfTitle') + ' — ' + titleMap[titleKey], MARGIN, 13);
     doc.setFontSize(8); doc.setFont('helvetica','normal');
-    doc.text((filter==='open'?'Nur Offene':'Alle Punkte') + '  ·  ' + new Date().toLocaleDateString('de-DE') + '  ·  ' + pts.length + ' Punkte', PAGE_W-MARGIN, 13, { align:'right' });
+    doc.text((filter==='open'?t('pdfFilterOpen'):t('pdfFilterAll')) + '  ·  ' + new Date().toLocaleDateString(pdfLocale) + '  ·  ' + t('pdfPoints',pts.length), PAGE_W-MARGIN, 13, { align:'right' });
     doc.setTextColor(0,0,0);
   }
   drawHeader();
@@ -1628,17 +2081,17 @@ async function exportPDFUniversal(filter, withPhotos, withPosition) {
 
     doc.setFontSize(7.5); doc.setFont('helvetica','normal');
     doc.setTextColor(p.kategorie==='critical'?204:40, 0, 0);
-    doc.text(p.kategorie==='critical'?'● Critical':'● Non-Critical', MARGIN+4, ty);
-    const kw = doc.getTextWidth(p.kategorie==='critical'?'● Critical':'● Non-Critical');
+    doc.text(p.kategorie==='critical'?t('pdfCritical'):t('pdfNonCritical'), MARGIN+4, ty);
+    const kw = doc.getTextWidth(p.kategorie==='critical'?t('pdfCritical'):t('pdfNonCritical'));
     doc.setTextColor(p.status==='done'?22:overdue?204:120, p.status==='done'?163:0, p.status==='done'?74:0);
-    doc.text('   '+(p.status==='done'?'✓ Erledigt':overdue?'⚠ Überfällig':'Offen'), MARGIN+4+kw, ty);
+    doc.text('   '+(p.status==='done'?t('pdfDone'):overdue?t('pdfOverdueStatus'):t('pdfStatusOpen')), MARGIN+4+kw, ty);
     ty += 5;
 
     doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(60,60,60);
-    if (etage)             { doc.text('Etage: '+etage.name,                                                    MARGIN+4, ty); ty+=4.5; }
-    if (contact)           { doc.text('Zuständig: '+contact.name+(contact.firma?' ('+contact.firma+')':''),    MARGIN+4, ty); ty+=4.5; }
-    if (p.aufgenommen_von) { doc.text('Aufgen. von: '+p.aufgenommen_von,                                       MARGIN+4, ty); ty+=4.5; }
-    if (p.due_date)        { doc.setTextColor(overdue?204:60,overdue?0:60,0); doc.text('Fällig: '+fmtDate(p.due_date)+(overdue?' ⚠':''), MARGIN+4, ty); doc.setTextColor(60,60,60); ty+=4.5; }
+    if (etage)             { doc.text(t('pdfFloor')+etage.name,                                                    MARGIN+4, ty); ty+=4.5; }
+    if (contact)           { doc.text(t('pdfResp')+contact.name+(contact.firma?' ('+contact.firma+')':''),    MARGIN+4, ty); ty+=4.5; }
+    if (p.aufgenommen_von) { doc.text(t('pdfRecBy')+p.aufgenommen_von,                                       MARGIN+4, ty); ty+=4.5; }
+    if (p.due_date)        { doc.setTextColor(overdue?204:60,overdue?0:60,0); doc.text(t('pdfDue')+fmtDate(p.due_date)+(overdue?t('pdfOverdue'):''), MARGIN+4, ty); doc.setTextColor(60,60,60); ty+=4.5; }
     if (p.beschreibung)    { doc.setFontSize(7.5); doc.setTextColor(100,100,100); doc.text(doc.splitTextToSize(p.beschreibung, TEXT_W-8).slice(0,3), MARGIN+4, ty); }
 
     // Plan rechts
@@ -1654,7 +2107,7 @@ async function exportPDFUniversal(filter, withPhotos, withPosition) {
       doc.setFillColor(245,245,245); doc.setDrawColor(220,220,220);
       doc.roundedRect(PLAN_X, curY+3, PLAN_W, Math.max(26,TOP_H-6), 2,2,'FD');
       doc.setFontSize(7.5); doc.setTextColor(180,180,180);
-      doc.text(p.loc_x==null?'Keine Position':'Kein Grundriss', PLAN_X+PLAN_W/2, curY+TOP_H/2, {align:'center'});
+      doc.text(p.loc_x==null?t('pdfNoPos'):t('pdfNoFloor'), PLAN_X+PLAN_W/2, curY+TOP_H/2, {align:'center'});
     }
 
     // Foto-Streifen unten
@@ -1662,7 +2115,7 @@ async function exportPDFUniversal(filter, withPhotos, withPosition) {
       const fy = curY + TOP_H + 2;
       doc.setDrawColor(230,230,230); doc.setLineWidth(0.2); doc.line(MARGIN+4, fy, MARGIN+CONTENT_W-4, fy);
       doc.setFontSize(6.5); doc.setTextColor(150,150,150);
-      doc.text('Fotos:', MARGIN+4, fy+3.5);
+      doc.text(t('pdfPhotosLabel'), MARGIN+4, fy+3.5);
       for (let j=0; j<fotos.length; j++) {
         try { doc.addImage(fotos[j],'JPEG', MARGIN+18+j*(PHOTO_SZ+2), fy+1, PHOTO_SZ, PHOTO_SZ-1); } catch(e) {}
       }
@@ -1674,12 +2127,12 @@ async function exportPDFUniversal(filter, withPhotos, withPosition) {
   const pc = doc.internal.getNumberOfPages();
   for (let pg=1;pg<=pc;pg++) {
     doc.setPage(pg); doc.setFontSize(7); doc.setTextColor(160,160,160);
-    doc.text('Seite '+pg+' von '+pc, PAGE_W/2, PAGE_H-4, {align:'center'});
+    doc.text(t('pdfPage',pg,pc), PAGE_W/2, PAGE_H-4, {align:'center'});
   }
 
   hideLoading();
-  const sfx = titleMap[titleKey].replace(/ \+ /g,'_').replace('Daten','');
-  doc.save('Nacharbeit'+(sfx?'_'+sfx.trim().replace(/^_/,''):'')+'_'+(filter==='open'?'Offen':'Alle')+'_'+new Date().toISOString().slice(0,10)+'.pdf');
+  const sfx = titleMap[titleKey].replace(/ \+ /g,'_').replace(t('expDaten'),'');
+  doc.save('Rework'+(sfx?'_'+sfx.trim().replace(/^_/,''):'')+'_'+(filter==='open'?t('fileOpen'):t('fileAll'))+'_'+new Date().toISOString().slice(0,10)+'.pdf');
 }
 
 // ===================== EXCEL UNIVERSAL =====================
@@ -1700,20 +2153,20 @@ async function exportExcelUniversal(filter, withPhotos, withPosition) {
     const ws = wb.addWorksheet('Nacharbeit', { pageSetup:{ paperSize:9, orientation:'landscape', fitToPage:true, fitToWidth:1 } });
 
     const cols = [
-      {header:'Nr.',             key:'nr',      width:7 },
-      {header:'Titel',           key:'titel',   width:30},
-      {header:'Kategorie',       key:'kat',     width:13},
-      {header:'Status',          key:'status',  width:17},
-      {header:'Etage',           key:'etage',   width:16},
-      {header:'Verantwortlicher',key:'verant',  width:22},
-      {header:'Aufgen. von',     key:'aufgen',  width:15},
-      {header:'Fällig',          key:'faellig', width:13},
-      {header:'Beschreibung',    key:'beschr',  width:35},
+      {header:t('xlNr'),    key:'nr',      width:7 },
+      {header:t('xlTitle'), key:'titel',   width:30},
+      {header:t('xlCat'),   key:'kat',     width:13},
+      {header:t('xlStatus'),key:'status',  width:17},
+      {header:t('xlFloor'), key:'etage',   width:16},
+      {header:t('xlResp'),  key:'verant',  width:22},
+      {header:t('xlRecBy'), key:'aufgen',  width:15},
+      {header:t('xlDue'),   key:'faellig', width:13},
+      {header:t('xlDesc'),  key:'beschr',  width:35},
     ];
     const POS_COL_IDX   = 9;  // 0-based
     const FOTO_COL_START = withPosition ? 10 : 9;
-    if (withPosition) cols.push({ header:'Position', key:'pos', width: Math.ceil(PLAN_W_PX/7)+1 });
-    if (withPhotos)   for (let k=1;k<=MAX_FOTOS;k++) cols.push({ header:`Foto ${k}`, key:`foto${k}`, width:16 });
+    if (withPosition) cols.push({ header:t('xlPos'), key:'pos', width: Math.ceil(PLAN_W_PX/7)+1 });
+    if (withPhotos)   for (let k=1;k<=MAX_FOTOS;k++) cols.push({ header:t('xlPhoto',k), key:`foto${k}`, width:16 });
     ws.columns = cols;
 
     // Header-Zeile
@@ -1728,7 +2181,7 @@ async function exportExcelUniversal(filter, withPhotos, withPosition) {
 
     for (let i=0; i<pts.length; i++) {
       const p       = pts[i];
-      showLoading(`Punkt ${i+1} von ${pts.length} verarbeiten...`);
+      showLoading(t('ldgProcess', i+1, pts.length));
       const etage   = allEtagen.find(e => e.id === p.etage_id);
       const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
       const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
@@ -1753,8 +2206,8 @@ async function exportExcelUniversal(filter, withPhotos, withPosition) {
 
       const row = ws.addRow({
         nr:'#'+(p.nummer||'?'), titel:p.titel||'',
-        kat:p.kategorie==='critical'?'Critical':'Non-Critical',
-        status:p.status==='open'?(overdue?'Offen (überfällig)':'Offen'):'Erledigt',
+        kat:p.kategorie==='critical'?t('xlCritical'):t('xlNonCritical'),
+        status:p.status==='open'?(overdue?t('xlOverdue'):t('xlOpen')):t('xlDone'),
         etage:etage?.name||'-', verant:contact?.name||'-',
         aufgen:p.aufgenommen_von||'-',
         faellig:p.due_date?fmtDate(p.due_date):'-',
@@ -1793,7 +2246,7 @@ async function exportExcelUniversal(filter, withPhotos, withPosition) {
     }
 
     ws.views=[{state:'frozen',ySplit:1}];
-    showLoading('Datei erstellen...');
+    showLoading(t('ldgFileCreate'));
     const buffer = await wb.xlsx.writeBuffer();
     hideLoading();
 
@@ -1801,13 +2254,13 @@ async function exportExcelUniversal(filter, withPhotos, withPosition) {
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href = url;
-    const sfx = (withPhotos&&withPosition)?'Fotos_Positionen':withPhotos?'Fotos':'Positionen';
-    a.download = `Nacharbeit_${sfx}_${filter==='open'?'Offen':'Alle'}_${new Date().toISOString().slice(0,10)}.xlsx`;
+    const sfx = (withPhotos&&withPosition)?'Photos_Positions':withPhotos?'Photos':'Positions';
+    a.download = `Rework_${sfx}_${filter==='open'?t('fileOpen'):t('fileAll')}_${new Date().toISOString().slice(0,10)}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
   } catch(e) {
     hideLoading();
-    alert('Fehler beim Excel-Export: '+e.message);
+    alert(t('alertExcelErr')+e.message);
   }
 }
 
@@ -1820,9 +2273,10 @@ function getExportRows(filter) {
 
 function exportPDF(filter) {
   const pts = getExportRows(filter);
-  if (!pts.length) { alert('Keine Punkte zum Exportieren.'); return; }
+  if (!pts.length) { alert(t('alertNoItems')); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const pdfLoc = currentLang === 'de' ? 'de-DE' : 'en-GB';
 
   // Header
   doc.setFillColor(204, 0, 0);
@@ -1830,11 +2284,11 @@ function exportPDF(filter) {
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(15);
   doc.setFont('helvetica', 'bold');
-  doc.text('Hausbau Nacharbeitspunkte', 14, 14);
+  doc.text(t('pdfTitle'), 14, 14);
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
-  const filterLabel = filter === 'open' ? 'Nur offene Punkte' : 'Alle Punkte';
-  doc.text(`${filterLabel}  |  Erstellt: ${new Date().toLocaleDateString('de-DE')}  |  Gesamt: ${pts.length}`, 200, 14, {align:'right'});
+  const filterLabel = filter === 'open' ? t('pdfFilterOpen') : t('pdfFilterAll');
+  doc.text(`${filterLabel}  |  ${new Date().toLocaleDateString(pdfLoc)}  |  ${t('pdfPoints',pts.length)}`, 200, 14, {align:'right'});
 
   doc.setTextColor(0, 0, 0);
 
@@ -1846,8 +2300,8 @@ function exportPDF(filter) {
     return [
       '#' + (p.nummer||'?'),
       p.titel || '',
-      p.kategorie === 'critical' ? 'Critical' : 'Non-Crit.',
-      p.status === 'open' ? (overdue ? 'Offen (!!)' : 'Offen') : 'Erledigt',
+      p.kategorie === 'critical' ? t('xlCritical') : t('xlNonCritical'),
+      p.status === 'open' ? (overdue ? t('xlOverdue') : t('xlOpen')) : t('xlDone'),
       etage?.name || '-',
       contact?.name || '-',
       p.aufgenommen_von || '-',
@@ -1857,7 +2311,7 @@ function exportPDF(filter) {
   });
 
   doc.autoTable({
-    head: [['Nr.', 'Titel', 'Kategorie', 'Status', 'Etage', 'Verantwortlicher', 'Aufgen. von', 'Fällig', 'Beschreibung']],
+    head: [[t('xlNr'), t('xlTitle'), t('xlCat'), t('xlStatus'), t('xlFloor'), t('xlResp'), t('xlRecBy'), t('xlDue'), t('xlDesc')]],
     body: rows,
     startY: 26,
     styles: { fontSize: 8, cellPadding: 2.5, overflow: 'linebreak', lineColor: [220,220,220], lineWidth: 0.2 },
@@ -1877,8 +2331,8 @@ function exportPDF(filter) {
     didParseCell: (data) => {
       if (data.section === 'body' && data.column.index === 3) {
         const val = data.cell.raw;
-        if (val === 'Offen (!!)') { data.cell.styles.textColor = [204,0,0]; data.cell.styles.fontStyle = 'bold'; }
-        else if (val === 'Erledigt') { data.cell.styles.textColor = [22,163,74]; }
+        if (val === t('xlOverdue')) { data.cell.styles.textColor = [204,0,0]; data.cell.styles.fontStyle = 'bold'; }
+        else if (val === t('xlDone')) { data.cell.styles.textColor = [22,163,74]; }
       }
     },
     margin: { left: 14, right: 14 }
@@ -1889,16 +2343,16 @@ function exportPDF(filter) {
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
     doc.setFontSize(7); doc.setTextColor(150,150,150);
-    doc.text(`Seite ${i} von ${pageCount}`, 148.5, 205, {align:'center'});
+    doc.text(t('pdfPage',i,pageCount), 148.5, 205, {align:'center'});
   }
 
-  const fname = `Nacharbeit_${filter==='open'?'Offen':'Alle'}_${new Date().toISOString().slice(0,10)}.pdf`;
+  const fname = `Rework_${filter==='open'?t('fileOpen'):t('fileAll')}_${new Date().toISOString().slice(0,10)}.pdf`;
   doc.save(fname);
 }
 
 function exportExcel(filter) {
   const pts = getExportRows(filter);
-  if (!pts.length) { alert('Keine Punkte zum Exportieren.'); return; }
+  if (!pts.length) { alert(t('alertNoItems')); return; }
 
   const today = new Date(); today.setHours(0,0,0,0);
   const rows = pts.map(p => {
@@ -1906,18 +2360,18 @@ function exportExcel(filter) {
     const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
     const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
     return {
-      'Nr.': '#' + (p.nummer||'?'),
-      'Titel': p.titel || '',
-      'Kategorie': p.kategorie === 'critical' ? 'Critical' : 'Non-Critical',
-      'Status': p.status === 'open' ? (overdue ? 'Offen (überfällig)' : 'Offen') : 'Erledigt',
-      'Etage': etage?.name || '-',
-      'Verantwortlicher': contact?.name || '-',
-      'Firma': contact?.firma || '-',
-      'Aufgenommen von': p.aufgenommen_von || '-',
-      'Fälligkeitsdatum': p.due_date ? fmtDate(p.due_date) : '-',
-      'Eingetragen am': fmtDateTime(p.erstellt),
-      'Fotos': p.foto_count || 0,
-      'Beschreibung': p.beschreibung || '-'
+      [t('xlNr')]: '#' + (p.nummer||'?'),
+      [t('xlTitle')]: p.titel || '',
+      [t('xlCat')]: p.kategorie === 'critical' ? t('xlCritical') : t('xlNonCritical'),
+      [t('xlStatus')]: p.status === 'open' ? (overdue ? t('xlOverdue') : t('xlOpen')) : t('xlDone'),
+      [t('xlFloor')]: etage?.name || '-',
+      [t('xlResp')]: contact?.name || '-',
+      [t('xlFirma')]: contact?.firma || '-',
+      [t('xlRecByFull')]: p.aufgenommen_von || '-',
+      [t('xlDueFull')]: p.due_date ? fmtDate(p.due_date) : '-',
+      [t('xlCreated')]: fmtDateTime(p.erstellt),
+      [t('xlPhotos')]: p.foto_count || 0,
+      [t('xlDesc')]: p.beschreibung || '-'
     };
   });
 
@@ -1927,9 +2381,9 @@ function exportExcel(filter) {
     {wch:8},{wch:40},{wch:14},{wch:20},{wch:18},{wch:24},{wch:20},{wch:18},{wch:16},{wch:22},{wch:8},{wch:50}
   ];
   const wb = XLSX.utils.book_new();
-  const sheetName = filter === 'open' ? 'Offene Punkte' : 'Alle Punkte';
+  const sheetName = filter === 'open' ? t('xlSheetOpen') : t('xlSheetAll');
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
-  const fname = `Nacharbeit_${filter==='open'?'Offen':'Alle'}_${new Date().toISOString().slice(0,10)}.xlsx`;
+  const fname = `Rework_${filter==='open'?t('fileOpen'):t('fileAll')}_${new Date().toISOString().slice(0,10)}.xlsx`;
   XLSX.writeFile(wb, fname);
 }
 
@@ -1945,9 +2399,9 @@ function getImgDimensions(src) {
 
 async function exportPDFMitPosition(filter) {
   const pts = getExportRows(filter);
-  if (!pts.length) { alert('Keine Punkte zum Exportieren.'); return; }
+  if (!pts.length) { alert(t('alertNoItems')); return; }
 
-  showLoading('PDF erstellen...');
+  showLoading(t('ldgPDF'));
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -1967,16 +2421,17 @@ async function exportPDFMitPosition(filter) {
     if (et?.plan_base64) planDims[eid] = await getImgDimensions(et.plan_base64);
   }
 
+  const posLocale = currentLang === 'de' ? 'de-DE' : 'en-GB';
   function drawHeader() {
     doc.setFillColor(204, 0, 0);
     doc.rect(0, 0, PAGE_W, HEADER_H, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(12); doc.setFont('helvetica', 'bold');
-    doc.text('Hausbau Nacharbeit — Positionen', MARGIN, 13);
+    doc.text(t('pdfTitle') + ' — ' + t('xlPos'), MARGIN, 13);
     doc.setFontSize(8); doc.setFont('helvetica', 'normal');
-    const label = (filter === 'open' ? 'Nur offene Punkte' : 'Alle Punkte') +
-                  '  ·  ' + new Date().toLocaleDateString('de-DE') +
-                  '  ·  ' + pts.length + ' Punkte';
+    const label = (filter === 'open' ? t('pdfFilterOpen') : t('pdfFilterAll')) +
+                  '  ·  ' + new Date().toLocaleDateString(posLocale) +
+                  '  ·  ' + t('pdfPoints',pts.length);
     doc.text(label, PAGE_W - MARGIN, 13, { align: 'right' });
     doc.setTextColor(0, 0, 0);
   }
@@ -2036,23 +2491,23 @@ async function exportPDFMitPosition(filter) {
     // Kategorie & Status als kleine Pill-Texte
     doc.setFontSize(7.5); doc.setFont('helvetica', 'normal');
     doc.setTextColor(p.kategorie === 'critical' ? 204 : 40, 0, 0);
-    doc.text(p.kategorie === 'critical' ? '● Critical' : '● Non-Critical', MARGIN + 4, ty);
-    const katW = doc.getTextWidth(p.kategorie === 'critical' ? '● Critical' : '● Non-Critical');
+    doc.text(p.kategorie === 'critical' ? t('pdfCritical') : t('pdfNonCritical'), MARGIN + 4, ty);
+    const katW = doc.getTextWidth(p.kategorie === 'critical' ? t('pdfCritical') : t('pdfNonCritical'));
     if (p.status === 'done')   doc.setTextColor(22, 163, 74);
     else if (overdue)          doc.setTextColor(204, 0, 0);
     else                       doc.setTextColor(120, 60, 0);
-    doc.text('   ' + (p.status === 'done' ? '✓ Erledigt' : overdue ? '⚠ Überfällig' : 'Offen'),
+    doc.text('   ' + (p.status === 'done' ? t('pdfDone') : overdue ? t('pdfOverdueStatus') : t('pdfStatusOpen')),
              MARGIN + 4 + katW, ty);
     ty += 5;
 
     // Detail-Zeilen
     doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
-    if (etage)              { doc.text('Etage: ' + etage.name, MARGIN + 4, ty); ty += 4.5; }
-    if (contact)            { doc.text('Zuständig: ' + contact.name + (contact.firma ? ' (' + contact.firma + ')' : ''), MARGIN + 4, ty); ty += 4.5; }
-    if (p.aufgenommen_von)  { doc.text('Aufgen. von: ' + p.aufgenommen_von, MARGIN + 4, ty); ty += 4.5; }
+    if (etage)              { doc.text(t('pdfFloor') + etage.name, MARGIN + 4, ty); ty += 4.5; }
+    if (contact)            { doc.text(t('pdfResp') + contact.name + (contact.firma ? ' (' + contact.firma + ')' : ''), MARGIN + 4, ty); ty += 4.5; }
+    if (p.aufgenommen_von)  { doc.text(t('pdfRecBy') + p.aufgenommen_von, MARGIN + 4, ty); ty += 4.5; }
     if (p.due_date) {
       doc.setTextColor(overdue ? 204 : 60, overdue ? 0 : 60, 0);
-      doc.text('Fällig: ' + fmtDate(p.due_date) + (overdue ? '  ⚠' : ''), MARGIN + 4, ty);
+      doc.text(t('pdfDue') + fmtDate(p.due_date) + (overdue ? t('pdfOverdue') : ''), MARGIN + 4, ty);
       doc.setTextColor(60, 60, 60);
       ty += 4.5;
     }
@@ -2091,7 +2546,7 @@ async function exportPDFMitPosition(filter) {
       doc.setFillColor(245, 245, 245); doc.setDrawColor(220,220,220);
       doc.roundedRect(PLAN_X, curY + 3, PLAN_W, Math.max(26, BLOCK_H - 6), 2, 2, 'FD');
       doc.setFontSize(7.5); doc.setTextColor(180, 180, 180);
-      const hint = p.loc_x == null ? 'Keine Position markiert' : 'Kein Grundriss';
+      const hint = p.loc_x == null ? t('pdfNoPos') : t('pdfNoFloor');
       doc.text(hint, PLAN_X + PLAN_W / 2, curY + BLOCK_H / 2, { align: 'center' });
     }
 
@@ -2103,11 +2558,11 @@ async function exportPDFMitPosition(filter) {
   for (let pg = 1; pg <= pageCount; pg++) {
     doc.setPage(pg);
     doc.setFontSize(7); doc.setTextColor(160, 160, 160);
-    doc.text('Seite ' + pg + ' von ' + pageCount, PAGE_W / 2, PAGE_H - 4, { align: 'center' });
+    doc.text(t('pdfPage',pg,pageCount), PAGE_W / 2, PAGE_H - 4, { align: 'center' });
   }
 
   hideLoading();
-  doc.save('Nacharbeit_Positionen_' + (filter === 'open' ? 'Offen' : 'Alle') + '_' + new Date().toISOString().slice(0,10) + '.pdf');
+  doc.save('Rework_Positions_' + (filter === 'open' ? t('fileOpen') : t('fileAll')) + '_' + new Date().toISOString().slice(0,10) + '.pdf');
 }
 
 // ===================== EXCEL MIT FOTOS =====================
@@ -2117,17 +2572,17 @@ async function loadExcelJS() {
     const s = document.createElement('script');
     s.src = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
     s.onload = resolve;
-    s.onerror = () => reject(new Error('ExcelJS konnte nicht geladen werden'));
+    s.onerror = () => reject(new Error(currentLang==='de'?'ExcelJS konnte nicht geladen werden':'ExcelJS could not be loaded'));
     document.head.appendChild(s);
   });
 }
 
 async function exportExcelMitBildern(filter) {
   const pts = getExportRows(filter);
-  if (!pts.length) { alert('Keine Punkte zum Exportieren.'); return; }
+  if (!pts.length) { alert(t('alertNoItems')); return; }
 
   try {
-    showLoading('ExcelJS laden...');
+    showLoading(t('ldgExcelLoad'));
     await loadExcelJS();
 
     const MAX_FOTOS = 5;
@@ -2145,17 +2600,17 @@ async function exportExcelMitBildern(filter) {
 
     // Spalten definieren
     const cols = [
-      { header: 'Nr.',             key: 'nr',      width: 7  },
-      { header: 'Titel',           key: 'titel',   width: 30 },
-      { header: 'Kategorie',       key: 'kat',     width: 13 },
-      { header: 'Status',          key: 'status',  width: 17 },
-      { header: 'Etage',           key: 'etage',   width: 16 },
-      { header: 'Verantwortlicher',key: 'verant',  width: 22 },
-      { header: 'Aufgen. von',     key: 'aufgen',  width: 15 },
-      { header: 'Fällig',          key: 'faellig', width: 13 },
-      { header: 'Beschreibung',    key: 'beschr',  width: 35 },
+      { header: t('xlNr'),    key: 'nr',      width: 7  },
+      { header: t('xlTitle'), key: 'titel',   width: 30 },
+      { header: t('xlCat'),   key: 'kat',     width: 13 },
+      { header: t('xlStatus'),key: 'status',  width: 17 },
+      { header: t('xlFloor'), key: 'etage',   width: 16 },
+      { header: t('xlResp'),  key: 'verant',  width: 22 },
+      { header: t('xlRecBy'), key: 'aufgen',  width: 15 },
+      { header: t('xlDue'),   key: 'faellig', width: 13 },
+      { header: t('xlDesc'),  key: 'beschr',  width: 35 },
     ];
-    for (let i = 1; i <= MAX_FOTOS; i++) cols.push({ header: `Foto ${i}`, key: `foto${i}`, width: COL_W });
+    for (let i = 1; i <= MAX_FOTOS; i++) cols.push({ header: t('xlPhoto',i), key: `foto${i}`, width: COL_W });
     ws.columns = cols;
 
     // Header-Zeile stylen
@@ -2171,7 +2626,7 @@ async function exportExcelMitBildern(filter) {
 
     for (let i = 0; i < pts.length; i++) {
       const p = pts[i];
-      showLoading(`Punkt ${i + 1} von ${pts.length} verarbeiten...`);
+      showLoading(t('ldgProcess', i+1, pts.length));
 
       const etage   = allEtagen.find(e => e.id === p.etage_id);
       const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
@@ -2190,8 +2645,8 @@ async function exportExcelMitBildern(filter) {
       const row = ws.addRow({
         nr:      '#' + (p.nummer || '?'),
         titel:   p.titel || '',
-        kat:     p.kategorie === 'critical' ? 'Critical' : 'Non-Critical',
-        status:  p.status === 'open' ? (overdue ? 'Offen (überfällig)' : 'Offen') : 'Erledigt',
+        kat:     p.kategorie === 'critical' ? t('xlCritical') : t('xlNonCritical'),
+        status:  p.status === 'open' ? (overdue ? t('xlOverdue') : t('xlOpen')) : t('xlDone'),
         etage:   etage?.name || '-',
         verant:  contact?.name || '-',
         aufgen:  p.aufgenommen_von || '-',
@@ -2235,7 +2690,7 @@ async function exportExcelMitBildern(filter) {
 
     ws.views = [{ state: 'frozen', ySplit: 1 }];
 
-    showLoading('Datei erstellen...');
+    showLoading(t('ldgFileCreate'));
     const buffer = await wb.xlsx.writeBuffer();
     hideLoading();
 
@@ -2243,13 +2698,13 @@ async function exportExcelMitBildern(filter) {
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href     = url;
-    a.download = `Nacharbeit_Fotos_${filter === 'open' ? 'Offen' : 'Alle'}_${new Date().toISOString().slice(0,10)}.xlsx`;
+    a.download = `Rework_Photos_${filter === 'open' ? t('fileOpen') : t('fileAll')}_${new Date().toISOString().slice(0,10)}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
 
   } catch(e) {
     hideLoading();
-    alert('Fehler beim Excel-Export mit Fotos: ' + e.message);
+    alert(t('alertExcelErr') + e.message);
   }
 }
 
@@ -2261,8 +2716,8 @@ function showFullPhoto(src){document.getElementById('photo-full-img').src=src;do
 
 // ===================== UTILS =====================
 function esc(s){if(!s)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-function fmtDate(d){if(!d)return'';return new Date(d+'T00:00:00').toLocaleDateString('de-DE');}
-function fmtDateTime(d){if(!d)return'';try{return new Date(d).toLocaleString('de-DE');}catch{return'';}}
+function fmtDate(d){if(!d)return'';const loc=currentLang==='de'?'de-DE':'en-GB';return new Date(d+'T00:00:00').toLocaleDateString(loc);}
+function fmtDateTime(d){if(!d)return'';const loc=currentLang==='de'?'de-DE':'en-GB';try{return new Date(d).toLocaleString(loc);}catch{return'';}}
 
 // ===================== STORAGE HELPER =====================
 function storageGet(key) { try { return localStorage.getItem(key); } catch { return null; } }
@@ -2270,6 +2725,7 @@ function storageSet(key, val) { try { localStorage.setItem(key, val); } catch {}
 function storageDel(key) { try { localStorage.removeItem(key); } catch {} }
 
 // ===================== BOOT =====================
+applyLang(); // Apply language immediately (before login)
 const loggedInUser = storageGet('auth-user');
 if (loggedInUser && USERS[loggedInUser]) {
   currentUser = loggedInUser;
