@@ -212,6 +212,15 @@
   .album-upload-zone { border: 2px dashed var(--border); border-radius: 14px; padding: 36px 24px; text-align: center; cursor: pointer; transition: all 0.2s; color: var(--muted); margin-bottom: 28px; background: white; }
   .album-upload-zone:hover, .album-upload-zone.drag-over { border-color: var(--primary); background: #fff5f5; color: var(--primary); }
   .album-upload-icon { font-size: 2.8rem; margin-bottom: 10px; }
+  /* Select mode */
+  .album-select-check { position:absolute; top:6px; left:6px; width:22px; height:22px; border-radius:50%; border:2.5px solid rgba(255,255,255,0.9); background:rgba(0,0,0,0.3); box-shadow:0 1px 4px rgba(0,0,0,0.35); pointer-events:none; display:none; align-items:center; justify-content:center; color:white; font-size:12px; font-weight:700; }
+  #album-content.select-mode .album-select-check { display:flex; }
+  #album-content.select-mode .album-photo-del { display:none !important; }
+  #album-content.select-mode .album-photo:hover { transform:none; box-shadow:0 2px 8px rgba(0,0,0,0.1); }
+  #album-content.select-mode .album-photo { cursor:pointer; }
+  .album-photo.selected { outline:3px solid var(--primary); outline-offset:-3px; }
+  .album-photo.selected .album-select-check { background:var(--primary); border-color:var(--primary); }
+  .album-delete-bar { background:#fff0f0; border:1px solid #fca5a5; border-radius:12px; padding:12px 16px; margin-bottom:20px; display:none; align-items:center; gap:10px; flex-wrap:wrap; }
 </style>
 </head>
 <body>
@@ -515,12 +524,20 @@ create policy "anon_full" on public.album_photos  for all to anon using (true) w
 <div id="view-album" class="view">
   <div class="card-header" style="margin-bottom:20px">
     <h1 id="album-title">📷 Fotoalbum</h1>
-    <div style="display:flex;gap:10px;align-items:center">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <span id="album-count" style="color:var(--muted);font-size:0.9rem"></span>
+      <button id="album-select-btn" class="btn btn-ghost" onclick="toggleAlbumDeleteMode()">🗑️ Auswählen</button>
       <button id="album-upload-btn" class="btn btn-primary" onclick="document.getElementById('album-file-input').click()">📤 Fotos hochladen</button>
     </div>
   </div>
   <input type="file" id="album-file-input" accept="image/*" multiple style="display:none" onchange="handleAlbumUpload(event)">
+  <!-- Delete-mode bar -->
+  <div class="album-delete-bar" id="album-delete-bar">
+    <span id="album-del-count" style="font-weight:600;color:var(--danger);min-width:100px">0 ausgewählt</span>
+    <button class="btn btn-ghost btn-sm" id="album-sel-all-btn" onclick="selectAllAlbum()">Alle markieren</button>
+    <button class="btn btn-danger btn-sm" id="album-del-selected-btn" onclick="deleteSelectedAlbum()" disabled>🗑️ Löschen (0)</button>
+    <button class="btn btn-ghost btn-sm" onclick="toggleAlbumDeleteMode()">✕ Abbrechen</button>
+  </div>
   <div class="album-upload-zone" id="album-upload-zone"
        onclick="document.getElementById('album-file-input').click()"
        ondragover="albumDragOver(event)" ondragleave="albumDragLeave(event)" ondrop="albumDrop(event)">
@@ -762,6 +779,13 @@ const LANG = {
     albumDeleteConfirm:'Dieses Foto wirklich löschen?',
     albumKW:(n)=>`KW ${n}`,
     albumCompressing:(i,n)=>`Foto ${i} von ${n} komprimieren...`,
+    albumStartSelect:'🗑️ Auswählen',
+    albumCancelSelect:'✕ Abbrechen',
+    albumSelectAll:'Alle markieren',
+    albumDeselectAll:'Alle abwählen',
+    albumSelCount:(n)=>n===0?'Nichts ausgewählt':`${n} ausgewählt`,
+    albumDeleteSelected:(n)=>`🗑️ Löschen (${n})`,
+    albumDeleteSelectedConfirm:(n)=>`${n} Foto${n!==1?'s':''} wirklich löschen?`,
   },
   en: {
     /* Sidebar */
@@ -915,6 +939,13 @@ const LANG = {
     albumDeleteConfirm:'Really delete this photo?',
     albumKW:(n)=>`Week ${n}`,
     albumCompressing:(i,n)=>`Compressing photo ${i} of ${n}...`,
+    albumStartSelect:'🗑️ Select',
+    albumCancelSelect:'✕ Cancel',
+    albumSelectAll:'Select all',
+    albumDeselectAll:'Deselect all',
+    albumSelCount:(n)=>n===0?'Nothing selected':`${n} selected`,
+    albumDeleteSelected:(n)=>`🗑️ Delete (${n})`,
+    albumDeleteSelectedConfirm:(n)=>`Really delete ${n} photo${n!==1?'s':''}?`,
   }
 };
 
@@ -1039,6 +1070,15 @@ function applyLang() {
   if (expLabel) expLabel.textContent = t('expLabel');
   const expBtn = document.querySelector('[data-exp-btn]');
   if (expBtn) expBtn.textContent = t('expDownload');
+  // Album
+  const albumSelBtn = document.getElementById('album-select-btn');
+  if (albumSelBtn) albumSelBtn.textContent = albumDeleteMode ? t('albumCancelSelect') : t('albumStartSelect');
+  const albumUpBtn = document.getElementById('album-upload-btn');
+  if (albumUpBtn) albumUpBtn.textContent = '📤 ' + t('albumUploadBtn');
+  const albumUpTxt = document.getElementById('album-upload-text');
+  if (albumUpTxt) albumUpTxt.textContent = t('albumUploadHint');
+  const albumExTxt = document.getElementById('album-exif-text');
+  if (albumExTxt) albumExTxt.textContent = t('albumExifHint');
 
   // Etagen modal
   const ePlanLabel = document.querySelector('#modal-etage .form-group:last-of-type label');
@@ -2865,8 +2905,9 @@ async function renderAlbum() {
         const dd = new Date(ph.aufgenommen_am);
         const dateStr = dd.toLocaleDateString(loc, { day:'2-digit', month:'2-digit', year:'numeric' });
         const timeStr = dd.toLocaleTimeString(loc, { hour:'2-digit', minute:'2-digit' });
-        html += `<div class="album-photo" onclick="showAlbumPhoto('${ph.id}')">
+        html += `<div class="album-photo${albumSelected.has(ph.id)?' selected':''}" id="aph-${ph.id}" onclick="albumPhotoClick('${ph.id}',this)">
           <img src="${ph.base64}" loading="lazy" alt="">
+          <span class="album-select-check">${albumSelected.has(ph.id)?'✓':''}</span>
           <button class="album-photo-del" onclick="event.stopPropagation();deleteAlbumPhoto('${ph.id}')" title="${t('btnDelete')}">🗑</button>
           <div class="album-photo-date">${dateStr}&nbsp;${timeStr}</div>
         </div>`;
@@ -2876,6 +2917,8 @@ async function renderAlbum() {
     html += `</div>`;
   }
   container.innerHTML = html;
+  if (albumDeleteMode) container.classList.add('select-mode');
+  else container.classList.remove('select-mode');
 }
 
 function showAlbumPhoto(id) {
@@ -2883,13 +2926,127 @@ function showAlbumPhoto(id) {
   if (ph) { document.getElementById('photo-full-img').src = ph.base64; document.getElementById('photo-full').classList.add('open'); }
 }
 
+// ---- single-photo delete (hover button) ----
 async function deleteAlbumPhoto(id) {
   if (!confirm(t('albumDeleteConfirm'))) return;
   showLoading(t('ldgDelete'));
   await sb.from('album_photos').delete().eq('id', id);
   allAlbumPhotos = allAlbumPhotos.filter(p => p.id !== id);
+  albumSelected.delete(id);
   hideLoading();
   renderAlbum();
+}
+
+// ---- select-mode / multi-delete ----
+let albumDeleteMode = false;
+let albumSelected = new Set();
+
+function albumPhotoClick(id, el) {
+  if (albumDeleteMode) {
+    toggleAlbumSelect(id, el);
+  } else {
+    showAlbumPhoto(id);
+  }
+}
+
+function toggleAlbumDeleteMode() {
+  albumDeleteMode = !albumDeleteMode;
+  albumSelected.clear();
+  // toggle upload zone & upload button
+  const zone = document.getElementById('album-upload-zone');
+  const upBtn = document.getElementById('album-upload-btn');
+  if (zone) zone.style.display = albumDeleteMode ? 'none' : '';
+  if (upBtn) upBtn.style.display = albumDeleteMode ? 'none' : '';
+  // toggle select-mode class on grid
+  const content = document.getElementById('album-content');
+  if (content) {
+    if (albumDeleteMode) content.classList.add('select-mode');
+    else content.classList.remove('select-mode');
+    // clear any lingering selected classes
+    content.querySelectorAll('.album-photo.selected').forEach(el => {
+      el.classList.remove('selected');
+      const chk = el.querySelector('.album-select-check');
+      if (chk) chk.textContent = '';
+    });
+  }
+  updateAlbumDeleteBar();
+  // update the "Auswählen" button text
+  const selBtn = document.getElementById('album-select-btn');
+  if (selBtn) selBtn.textContent = albumDeleteMode ? t('albumCancelSelect') : t('albumStartSelect');
+}
+
+function toggleAlbumSelect(id, el) {
+  if (albumSelected.has(id)) {
+    albumSelected.delete(id);
+    el.classList.remove('selected');
+    const chk = el.querySelector('.album-select-check');
+    if (chk) chk.textContent = '';
+  } else {
+    albumSelected.add(id);
+    el.classList.add('selected');
+    const chk = el.querySelector('.album-select-check');
+    if (chk) chk.textContent = '✓';
+  }
+  updateAlbumDeleteBar();
+}
+
+function selectAllAlbum() {
+  const allPhotos = document.querySelectorAll('#album-content .album-photo');
+  const allAreSelected = albumSelected.size === allAlbumPhotos.length;
+  if (allAreSelected) {
+    // deselect all
+    albumSelected.clear();
+    allPhotos.forEach(el => {
+      el.classList.remove('selected');
+      const chk = el.querySelector('.album-select-check');
+      if (chk) chk.textContent = '';
+    });
+  } else {
+    // select all
+    allAlbumPhotos.forEach(ph => albumSelected.add(ph.id));
+    allPhotos.forEach(el => {
+      el.classList.add('selected');
+      const chk = el.querySelector('.album-select-check');
+      if (chk) chk.textContent = '✓';
+    });
+  }
+  updateAlbumDeleteBar();
+}
+
+function updateAlbumDeleteBar() {
+  const bar = document.getElementById('album-delete-bar');
+  if (!bar) return;
+  bar.style.display = albumDeleteMode ? 'flex' : 'none';
+  const n = albumSelected.size;
+  const countEl = document.getElementById('album-del-count');
+  if (countEl) countEl.textContent = t('albumSelCount', n);
+  const delBtn = document.getElementById('album-del-selected-btn');
+  if (delBtn) { delBtn.textContent = t('albumDeleteSelected', n); delBtn.disabled = n === 0; }
+  const selAllBtn = document.getElementById('album-sel-all-btn');
+  if (selAllBtn) selAllBtn.textContent = albumSelected.size === allAlbumPhotos.length ? t('albumDeselectAll') : t('albumSelectAll');
+}
+
+async function deleteSelectedAlbum() {
+  const n = albumSelected.size;
+  if (!n) return;
+  if (!confirm(t('albumDeleteSelectedConfirm', n))) return;
+  showLoading(t('ldgDelete'));
+  const ids = [...albumSelected];
+  // Delete all at once via "in" filter
+  await sb.from('album_photos').delete().in('id', ids);
+  allAlbumPhotos = allAlbumPhotos.filter(p => !albumSelected.has(p.id));
+  albumSelected.clear();
+  albumDeleteMode = false;
+  hideLoading();
+  renderAlbum();
+  updateAlbumDeleteBar();
+  // Reset button text
+  const selBtn = document.getElementById('album-select-btn');
+  if (selBtn) selBtn.textContent = t('albumStartSelect');
+  const upBtn = document.getElementById('album-upload-btn');
+  if (upBtn) upBtn.style.display = '';
+  const zone = document.getElementById('album-upload-zone');
+  if (zone) zone.style.display = '';
 }
 
 async function handleAlbumUpload(event) {
