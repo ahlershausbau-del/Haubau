@@ -3503,7 +3503,7 @@ function showUploadReport(sources, details, exifrReady) {
   msg += `⚠️ Heute (kein EXIF, kein Zeitstempel): ${sources.now}\n`;
 
   if (sources.now > 0) {
-    msg += `\nDie ${sources.now} Foto${sources.now!==1?'s'} ohne EXIF/Zeitstempel:\n`;
+    msg += `\nDie ${sources.now} Foto${sources.now!==1?'s':''} ohne EXIF/Zeitstempel:\n`;
     details.filter(d => d.source === 'now').slice(0, 5).forEach(d => {
       msg += `  • ${d.name}\n`;
     });
