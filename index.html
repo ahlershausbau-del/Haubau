@@ -195,6 +195,23 @@
   .login-error { color:var(--danger); font-size:0.85rem; margin-bottom:12px; display:none; padding:8px 12px; background:#fef2f2; border-radius:6px; border:1px solid #fecaca; }
   .user-pill { display:flex; align-items:center; gap:6px; font-size:0.85rem; color:rgba(255,255,255,0.85); }
   .user-pill strong { color:white; }
+
+  /* ALBUM */
+  .album-month { margin-bottom: 36px; }
+  .album-month-header { font-size: 1.25rem; font-weight: 700; color: var(--text); padding: 10px 0 10px; border-bottom: 2px solid var(--primary); margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+  .album-week { margin-bottom: 24px; }
+  .album-week-header { font-size: 0.78rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; padding: 3px 10px; background: var(--bg); border-radius: 6px; display: inline-block; border: 1px solid var(--border); }
+  .album-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  @media (max-width: 480px) { .album-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); } }
+  .album-photo { position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.1); transition: transform 0.15s, box-shadow 0.15s; background: var(--bg); }
+  .album-photo:hover { transform: scale(1.03); box-shadow: 0 6px 20px rgba(0,0,0,0.2); }
+  .album-photo img { width: 100%; height: 100%; object-fit: cover; }
+  .album-photo-del { position: absolute; top: 6px; right: 6px; background: rgba(180,0,0,0.88); color: white; border: none; border-radius: 50%; width: 26px; height: 26px; cursor: pointer; font-size: 12px; display: none; align-items: center; justify-content: center; z-index: 5; }
+  .album-photo:hover .album-photo-del { display: flex; }
+  .album-photo-date { position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(transparent, rgba(0,0,0,0.65)); color: white; font-size: 0.7rem; padding: 18px 6px 5px; text-align: center; pointer-events: none; }
+  .album-upload-zone { border: 2px dashed var(--border); border-radius: 14px; padding: 36px 24px; text-align: center; cursor: pointer; transition: all 0.2s; color: var(--muted); margin-bottom: 28px; background: white; }
+  .album-upload-zone:hover, .album-upload-zone.drag-over { border-color: var(--primary); background: #fff5f5; color: var(--primary); }
+  .album-upload-icon { font-size: 2.8rem; margin-bottom: 10px; }
 </style>
 </head>
 <body>
@@ -290,26 +307,37 @@ create table if not exists meta (
 );
 insert into meta (key, value) values ('counter', 0) on conflict do nothing;
 
+create table if not exists album_photos (
+  id uuid default gen_random_uuid() primary key,
+  base64 text not null,
+  aufgenommen_am timestamptz not null,
+  hochgeladen_von text,
+  erstellt timestamptz default now()
+);
+
 -- Berechtigungen für anon-Rolle (App nutzt anon key)
-grant select, insert, update, delete on public.etagen   to anon, authenticated, service_role;
-grant select, insert, update, delete on public.contacts to anon, authenticated, service_role;
-grant select, insert, update, delete on public.punkte   to anon, authenticated, service_role;
-grant select, insert, update, delete on public.photos   to anon, authenticated, service_role;
-grant select, insert, update, delete on public.meta     to anon, authenticated, service_role;
+grant select, insert, update, delete on public.etagen        to anon, authenticated, service_role;
+grant select, insert, update, delete on public.contacts      to anon, authenticated, service_role;
+grant select, insert, update, delete on public.punkte        to anon, authenticated, service_role;
+grant select, insert, update, delete on public.photos        to anon, authenticated, service_role;
+grant select, insert, update, delete on public.meta          to anon, authenticated, service_role;
+grant select, insert, update, delete on public.album_photos  to anon, authenticated, service_role;
 
 -- RLS aktivieren
-alter table public.etagen   enable row level security;
-alter table public.contacts enable row level security;
-alter table public.punkte   enable row level security;
-alter table public.photos   enable row level security;
-alter table public.meta     enable row level security;
+alter table public.etagen        enable row level security;
+alter table public.contacts      enable row level security;
+alter table public.punkte        enable row level security;
+alter table public.photos        enable row level security;
+alter table public.meta          enable row level security;
+alter table public.album_photos  enable row level security;
 
 -- Policies: anon darf alles (App hat eigenen Login-Schutz)
-create policy "anon_full" on public.etagen   for all to anon using (true) with check (true);
-create policy "anon_full" on public.contacts for all to anon using (true) with check (true);
-create policy "anon_full" on public.punkte   for all to anon using (true) with check (true);
-create policy "anon_full" on public.photos   for all to anon using (true) with check (true);
-create policy "anon_full" on public.meta     for all to anon using (true) with check (true);</div>
+create policy "anon_full" on public.etagen        for all to anon using (true) with check (true);
+create policy "anon_full" on public.contacts      for all to anon using (true) with check (true);
+create policy "anon_full" on public.punkte        for all to anon using (true) with check (true);
+create policy "anon_full" on public.photos        for all to anon using (true) with check (true);
+create policy "anon_full" on public.meta          for all to anon using (true) with check (true);
+create policy "anon_full" on public.album_photos  for all to anon using (true) with check (true);</div>
 
     <div class="steps" style="margin-top:12px">
       <ol start="4">
@@ -355,6 +383,7 @@ create policy "anon_full" on public.meta     for all to anon using (true) with c
     <button class="nav-link" onclick="showView('neu');closeSidebar()">➕ Neuer Punkt</button>
     <button class="nav-link" onclick="showView('etagen');closeSidebar()">🏢 Etagen</button>
     <button class="nav-link" onclick="showView('verantwortliche');closeSidebar()">👷 Verantwortliche</button>
+    <button class="nav-link" onclick="showView('album');closeSidebar()">📷 Fotoalbum</button>
   </div>
   <div class="sidebar-footer">
     <div class="sidebar-user" id="nav-user-pill">👤</div>
@@ -482,6 +511,25 @@ create policy "anon_full" on public.meta     for all to anon using (true) with c
   </div>
   <div id="contacts-liste"></div>
 </div>
+
+<div id="view-album" class="view">
+  <div class="card-header" style="margin-bottom:20px">
+    <h1 id="album-title">📷 Fotoalbum</h1>
+    <div style="display:flex;gap:10px;align-items:center">
+      <span id="album-count" style="color:var(--muted);font-size:0.9rem"></span>
+      <button id="album-upload-btn" class="btn btn-primary" onclick="document.getElementById('album-file-input').click()">📤 Fotos hochladen</button>
+    </div>
+  </div>
+  <input type="file" id="album-file-input" accept="image/*" multiple style="display:none" onchange="handleAlbumUpload(event)">
+  <div class="album-upload-zone" id="album-upload-zone"
+       onclick="document.getElementById('album-file-input').click()"
+       ondragover="albumDragOver(event)" ondragleave="albumDragLeave(event)" ondrop="albumDrop(event)">
+    <div class="album-upload-icon">📷</div>
+    <div id="album-upload-text" style="font-weight:600;margin-bottom:6px;font-size:1rem">Fotos hierher ziehen oder klicken</div>
+    <div id="album-exif-text" style="font-size:0.82rem">Aufnahmedatum wird automatisch aus EXIF-Daten gelesen</div>
+  </div>
+  <div id="album-content"></div>
+</div>
 </div><!-- /main-content -->
 </div><!-- /main-app -->
 
@@ -552,6 +600,7 @@ create policy "anon_full" on public.meta     for all to anon using (true) with c
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/lite.umd.js"></script>
 <script>
 // ===================== SUPABASE CONFIG (fest eingebaut) =====================
 const SUPABASE_URL = 'https://knwlvsndlhlxozyqmvoe.supabase.co';
@@ -565,6 +614,7 @@ const LANG = {
     /* Sidebar */
     navDashboard:'🗺️ Dashboard', navListe:'📋 Punkte', navNeu:'➕ Neuer Punkt',
     navEtagen:'🏢 Etagen', navVerantwortliche:'👷 Verantwortliche',
+    navAlbum:'📷 Fotoalbum',
     navLogout:'🚪 Abmelden', langToggle:'🇬🇧 EN',
     sidebarBrand:'🏗️ Hausbau<br>Nacharbeit', topbarBrand:'🏗️ Nacharbeit',
     /* Login */
@@ -701,11 +751,23 @@ const LANG = {
     alertSaveErr:'Fehler: ', alertExcelErr:'Fehler beim Excel-Export: ',
     alertFloorSaveErr:'Fehler beim Speichern: ',
     resetConfirm:'Supabase-Verbindung zurücksetzen?',
+    /* Album */
+    albumTitle:'📷 Fotoalbum',
+    albumUploadBtn:'Fotos hochladen',
+    albumUploadHint:'Fotos hierher ziehen oder klicken',
+    albumExifHint:'Aufnahmedatum wird automatisch aus EXIF-Daten gelesen',
+    albumEmpty:'Noch keine Fotos im Album',
+    albumEmptyHint:'Lade Fotos hoch um loszulegen',
+    albumPhotos:(n)=>`${n} Foto${n!==1?'s':''}`,
+    albumDeleteConfirm:'Dieses Foto wirklich löschen?',
+    albumKW:(n)=>`KW ${n}`,
+    albumCompressing:(i,n)=>`Foto ${i} von ${n} komprimieren...`,
   },
   en: {
     /* Sidebar */
     navDashboard:'🗺️ Dashboard', navListe:'📋 Items', navNeu:'➕ New Item',
     navEtagen:'🏢 Floors', navVerantwortliche:'👷 Responsible',
+    navAlbum:'📷 Photo Album',
     navLogout:'🚪 Log Out', langToggle:'🇩🇪 DE',
     sidebarBrand:'🏗️ Construction<br>Rework', topbarBrand:'🏗️ Rework',
     /* Login */
@@ -842,6 +904,17 @@ const LANG = {
     alertSaveErr:'Error: ', alertExcelErr:'Excel export error: ',
     alertFloorSaveErr:'Save error: ',
     resetConfirm:'Reset Supabase connection?',
+    /* Album */
+    albumTitle:'📷 Photo Album',
+    albumUploadBtn:'Upload Photos',
+    albumUploadHint:'Drag photos here or click to upload',
+    albumExifHint:'Date taken is automatically read from EXIF metadata',
+    albumEmpty:'No photos in album yet',
+    albumEmptyHint:'Upload photos to get started',
+    albumPhotos:(n)=>`${n} photo${n!==1?'s':''}`,
+    albumDeleteConfirm:'Really delete this photo?',
+    albumKW:(n)=>`Week ${n}`,
+    albumCompressing:(i,n)=>`Compressing photo ${i} of ${n}...`,
   }
 };
 
@@ -870,7 +943,7 @@ function applyLang() {
   const topBrand = document.querySelector('.topbar-brand');
   if (topBrand) topBrand.textContent = t('topbarBrand');
   const navLinks = document.querySelectorAll('.nav-link');
-  const navKeys = ['navDashboard','navListe','navNeu','navEtagen','navVerantwortliche'];
+  const navKeys = ['navDashboard','navListe','navNeu','navEtagen','navVerantwortliche','navAlbum'];
   navLinks.forEach((el,i)=>{ if(navKeys[i]) el.innerHTML = t(navKeys[i]); });
   const logoutBtn = document.querySelector('.sidebar-logout');
   if (logoutBtn) logoutBtn.textContent = t('navLogout');
@@ -1142,12 +1215,13 @@ function showView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
   document.getElementById('view-' + name).classList.add('active');
-  ['dashboard','liste','neu','etagen','verantwortliche'].forEach((n, i) => { if (n === name) document.querySelectorAll('.nav-link')[i]?.classList.add('active'); });
+  ['dashboard','liste','neu','etagen','verantwortliche','album'].forEach((n, i) => { if (n === name) document.querySelectorAll('.nav-link')[i]?.classList.add('active'); });
   if (name === 'neu' && !editingId) resetForm();
   if (name === 'etagen') renderEtagen();
   if (name === 'verantwortliche') renderContacts();
   if (name === 'liste') renderListe();
   if (name === 'dashboard') renderDashboard();
+  if (name === 'album') renderAlbum();
 }
 
 // ===================== STATS =====================
@@ -2706,6 +2780,170 @@ async function exportExcelMitBildern(filter) {
     hideLoading();
     alert(t('alertExcelErr') + e.message);
   }
+}
+
+// ===================== ALBUM =====================
+let allAlbumPhotos = [];
+let albumLoaded = false;
+
+/** ISO calendar week + year for a given Date */
+function getCalendarWeek(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return { week: Math.ceil((((d - yearStart) / 86400000) + 1) / 7), year: d.getUTCFullYear() };
+}
+
+function fmtMonthHeader(year, month0) {
+  const loc = currentLang === 'de' ? 'de-DE' : 'en-GB';
+  return new Date(year, month0, 1).toLocaleDateString(loc, { month: 'long', year: 'numeric' });
+}
+
+async function loadAlbumPhotos() {
+  const { data, error } = await sb.from('album_photos').select('*').order('aufgenommen_am', { ascending: false });
+  if (!error) allAlbumPhotos = data || [];
+  albumLoaded = true;
+}
+
+async function renderAlbum() {
+  const container = document.getElementById('album-content');
+  if (!container) return;
+
+  // Static text
+  const h1 = document.getElementById('album-title');
+  if (h1) h1.textContent = t('albumTitle');
+  const upBtn = document.getElementById('album-upload-btn');
+  if (upBtn) upBtn.textContent = '📤 ' + t('albumUploadBtn');
+  const upText = document.getElementById('album-upload-text');
+  if (upText) upText.textContent = t('albumUploadHint');
+  const exText = document.getElementById('album-exif-text');
+  if (exText) exText.textContent = t('albumExifHint');
+
+  // Load on first visit
+  if (!albumLoaded) {
+    showLoading(t('ldgPhotos'));
+    await loadAlbumPhotos();
+    hideLoading();
+  }
+
+  // Count badge
+  const countEl = document.getElementById('album-count');
+  if (countEl) countEl.textContent = allAlbumPhotos.length ? t('albumPhotos', allAlbumPhotos.length) : '';
+
+  if (!allAlbumPhotos.length) {
+    container.innerHTML = `<div class="empty-state"><div class="icon">📷</div><p>${t('albumEmpty')}</p><p style="font-size:0.85rem;color:var(--muted);margin-top:8px">${t('albumEmptyHint')}</p></div>`;
+    return;
+  }
+
+  // Group: monthKey "YYYY-MM" → weekKey "YYYY-WW" → photos[]
+  const groups = {};
+  for (const ph of allAlbumPhotos) {
+    const d = new Date(ph.aufgenommen_am);
+    if (isNaN(d)) continue;
+    const mKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const { week, year: wy } = getCalendarWeek(d);
+    const wKey = `${wy}-${String(week).padStart(2,'0')}`;
+    if (!groups[mKey]) groups[mKey] = { label: fmtMonthHeader(d.getFullYear(), d.getMonth()), weeks: {} };
+    if (!groups[mKey].weeks[wKey]) groups[mKey].weeks[wKey] = { weekNum: week, photos: [] };
+    groups[mKey].weeks[wKey].photos.push(ph);
+  }
+
+  const loc = currentLang === 'de' ? 'de-DE' : 'en-GB';
+  let html = '';
+
+  for (const mKey of Object.keys(groups).sort((a,b) => b.localeCompare(a))) {
+    const mo = groups[mKey];
+    html += `<div class="album-month"><div class="album-month-header">📅 ${mo.label}</div>`;
+
+    for (const wKey of Object.keys(mo.weeks).sort((a,b) => b.localeCompare(a))) {
+      const wk = mo.weeks[wKey];
+      html += `<div class="album-week"><div class="album-week-header">${t('albumKW', wk.weekNum)}</div><div class="album-grid">`;
+
+      const sorted = [...wk.photos].sort((a,b) => new Date(b.aufgenommen_am) - new Date(a.aufgenommen_am));
+      for (const ph of sorted) {
+        const dd = new Date(ph.aufgenommen_am);
+        const dateStr = dd.toLocaleDateString(loc, { day:'2-digit', month:'2-digit', year:'numeric' });
+        const timeStr = dd.toLocaleTimeString(loc, { hour:'2-digit', minute:'2-digit' });
+        html += `<div class="album-photo" onclick="showAlbumPhoto('${ph.id}')">
+          <img src="${ph.base64}" loading="lazy" alt="">
+          <button class="album-photo-del" onclick="event.stopPropagation();deleteAlbumPhoto('${ph.id}')" title="${t('btnDelete')}">🗑</button>
+          <div class="album-photo-date">${dateStr}&nbsp;${timeStr}</div>
+        </div>`;
+      }
+      html += `</div></div>`;
+    }
+    html += `</div>`;
+  }
+  container.innerHTML = html;
+}
+
+function showAlbumPhoto(id) {
+  const ph = allAlbumPhotos.find(p => p.id === id);
+  if (ph) { document.getElementById('photo-full-img').src = ph.base64; document.getElementById('photo-full').classList.add('open'); }
+}
+
+async function deleteAlbumPhoto(id) {
+  if (!confirm(t('albumDeleteConfirm'))) return;
+  showLoading(t('ldgDelete'));
+  await sb.from('album_photos').delete().eq('id', id);
+  allAlbumPhotos = allAlbumPhotos.filter(p => p.id !== id);
+  hideLoading();
+  renderAlbum();
+}
+
+async function handleAlbumUpload(event) {
+  const files = Array.from(event.target?.files || event.files || []).filter(f => f.type.startsWith('image/'));
+  if (event.target?.value !== undefined) { try { event.target.value = ''; } catch {} }
+  if (!files.length) return;
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    showLoading(t('albumCompressing', i+1, files.length));
+
+    // 1. Read EXIF date
+    let takenAt = null;
+    try {
+      if (window.Exifr) {
+        const exif = await Exifr.parse(file, { tags: ['DateTimeOriginal','DateTime','CreateDate'], translateKeys: false });
+        takenAt = exif?.DateTimeOriginal || exif?.DateTime || exif?.CreateDate || null;
+      }
+    } catch(e) { console.warn('EXIF read failed:', e); }
+    if (!takenAt) takenAt = new Date();
+    if (!(takenAt instanceof Date)) { takenAt = new Date(takenAt); }
+    if (isNaN(takenAt.getTime())) takenAt = new Date();
+
+    // 2. Compress
+    const base64 = await compressToBase64(file);
+
+    // 3. Save
+    showLoading(t('ldgSave'));
+    const { data } = await sb.from('album_photos').insert({
+      base64,
+      aufgenommen_am: takenAt.toISOString(),
+      hochgeladen_von: currentUser
+    }).select().single();
+    if (data) allAlbumPhotos.push(data);
+  }
+
+  // Sort newest first
+  allAlbumPhotos.sort((a,b) => new Date(b.aufgenommen_am) - new Date(a.aufgenommen_am));
+  hideLoading();
+  renderAlbum();
+}
+
+function albumDragOver(e) {
+  e.preventDefault();
+  document.getElementById('album-upload-zone').classList.add('drag-over');
+}
+function albumDragLeave(e) {
+  document.getElementById('album-upload-zone').classList.remove('drag-over');
+}
+function albumDrop(e) {
+  e.preventDefault();
+  albumDragLeave(e);
+  const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+  if (files.length) handleAlbumUpload({ files });
 }
 
 // ===================== MODALS =====================
