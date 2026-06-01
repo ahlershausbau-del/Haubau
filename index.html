@@ -1523,8 +1523,22 @@ async function openDetail(id) {
 async function toggleDone(id, cur) {
   const newStatus = cur === 'done' ? 'open' : 'done';
   const upd = { status: newStatus, geschlossen_at: newStatus === 'done' ? new Date().toISOString() : null };
-  await sb.from('punkte').update(upd).eq('id', id);
-  await refreshPunkte(); closeModal('modal-detail'); renderListe();
+  showLoading(t('ldgSave'));
+  let { error } = await sb.from('punkte').update(upd).eq('id', id);
+  // Fallback: column might not exist in older schemas — retry without it
+  if (error && /column .*geschlossen_at/i.test(error.message || '')) {
+    console.warn('geschlossen_at column missing — updating status only');
+    ({ error } = await sb.from('punkte').update({ status: newStatus }).eq('id', id));
+  }
+  hideLoading();
+  if (error) {
+    console.error('toggleDone failed:', error);
+    alert('Fehler beim Speichern: ' + (error.message || JSON.stringify(error)));
+    return;
+  }
+  await refreshPunkte();
+  closeModal('modal-detail');
+  renderListe();
 }
 
 async function deletePunkt(id) {
