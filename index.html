@@ -560,10 +560,12 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <span id="album-count" style="color:var(--muted);font-size:0.9rem"></span>
       <button id="album-select-btn" class="btn btn-ghost" onclick="toggleAlbumDeleteMode()">🗑️ Auswählen</button>
+      <button id="album-camera-btn" class="btn btn-ghost" onclick="document.getElementById('album-camera-input').click()">📷 Kamera</button>
       <button id="album-upload-btn" class="btn btn-primary" onclick="document.getElementById('album-file-input').click()">📤 Fotos hochladen</button>
     </div>
   </div>
   <input type="file" id="album-file-input" accept="image/*" multiple style="display:none" onchange="handleAlbumUpload(event)">
+  <input type="file" id="album-camera-input" accept="image/*" capture="environment" style="display:none" onchange="handleAlbumUpload(event)">
   <!-- Delete-mode bar -->
   <div class="album-delete-bar" id="album-delete-bar">
     <span id="album-del-count" style="font-weight:600;color:var(--danger);min-width:100px">0 ausgewählt</span>
@@ -856,6 +858,7 @@ const LANG = {
     albumKW:(n)=>`KW ${n}`,
     albumCompressing:(i,n)=>`Foto ${i} von ${n} komprimieren...`,
     albumStartSelect:'🗑️ Auswählen',
+    albumCameraBtn:'📷 Kamera',
     albumCancelSelect:'✕ Abbrechen',
     albumSelectAll:'Alle markieren',
     albumDeselectAll:'Alle abwählen',
@@ -1028,6 +1031,7 @@ const LANG = {
     albumKW:(n)=>`Week ${n}`,
     albumCompressing:(i,n)=>`Compressing photo ${i} of ${n}...`,
     albumStartSelect:'🗑️ Select',
+    albumCameraBtn:'📷 Camera',
     albumCancelSelect:'✕ Cancel',
     albumSelectAll:'Select all',
     albumDeselectAll:'Deselect all',
@@ -1173,6 +1177,8 @@ function applyLang() {
   // Album
   const albumSelBtn = document.getElementById('album-select-btn');
   if (albumSelBtn) albumSelBtn.textContent = albumDeleteMode ? t('albumCancelSelect') : t('albumStartSelect');
+  const albumCamBtn = document.getElementById('album-camera-btn');
+  if (albumCamBtn) albumCamBtn.textContent = t('albumCameraBtn');
   const albumUpBtn = document.getElementById('album-upload-btn');
   if (albumUpBtn) albumUpBtn.textContent = '📤 ' + t('albumUploadBtn');
   const albumUpTxt = document.getElementById('album-upload-text');
@@ -3297,11 +3303,13 @@ function albumPhotoClick(id, el) {
 function toggleAlbumDeleteMode() {
   albumDeleteMode = !albumDeleteMode;
   albumSelected.clear();
-  // toggle upload zone & upload button
+  // toggle upload zone, camera & upload buttons
   const zone = document.getElementById('album-upload-zone');
   const upBtn = document.getElementById('album-upload-btn');
+  const camBtn = document.getElementById('album-camera-btn');
   if (zone) zone.style.display = albumDeleteMode ? 'none' : '';
   if (upBtn) upBtn.style.display = albumDeleteMode ? 'none' : '';
+  if (camBtn) camBtn.style.display = albumDeleteMode ? 'none' : '';
   // toggle select-mode class on grid
   const content = document.getElementById('album-content');
   if (content) {
@@ -3390,6 +3398,8 @@ async function deleteSelectedAlbum() {
   if (selBtn) selBtn.textContent = t('albumStartSelect');
   const upBtn = document.getElementById('album-upload-btn');
   if (upBtn) upBtn.style.display = '';
+  const camBtn = document.getElementById('album-camera-btn');
+  if (camBtn) camBtn.style.display = '';
   const zone = document.getElementById('album-upload-zone');
   if (zone) zone.style.display = '';
 }
@@ -3403,17 +3413,25 @@ async function handleAlbumUpload(event) {
     const file = files[i];
     showLoading(t('albumCompressing', i+1, files.length));
 
-    // 1. Read EXIF date (exifr full build — DateTimeOriginal returned as JS Date)
+    // 1. Read EXIF date — global is "exifr" (lowercase) in UMD browser build
     let takenAt = null;
     try {
-      if (window.Exifr) {
-        const exif = await Exifr.parse(file, { exif: true, tiff: true });
-        takenAt = exif?.DateTimeOriginal ?? exif?.DateTimeDigitized ?? exif?.DateTime ?? null;
+      const exifrLib = window.exifr || window.Exifr;
+      if (exifrLib && typeof exifrLib.parse === 'function') {
+        const exif = await exifrLib.parse(file);
+        console.log('EXIF for', file.name, exif);
+        takenAt = exif?.DateTimeOriginal ?? exif?.DateTimeDigitized ?? exif?.CreateDate ?? exif?.ModifyDate ?? exif?.DateTime ?? null;
+      } else {
+        console.warn('exifr library not loaded — falling back to file.lastModified');
       }
-    } catch(e) { console.warn('EXIF read failed:', e); }
+    } catch(e) { console.warn('EXIF read failed for', file.name, ':', e); }
+
+    // Fallback chain: EXIF → file.lastModified (browser preserves photo mtime) → now
+    if (!takenAt && file.lastModified) takenAt = new Date(file.lastModified);
     if (!takenAt) takenAt = new Date();
     if (!(takenAt instanceof Date)) takenAt = new Date(takenAt);
     if (isNaN(takenAt.getTime())) takenAt = new Date();
+    console.log('→ saving', file.name, 'with date', takenAt.toISOString());
 
     // 2. Compress
     const base64 = await compressToBase64(file);
