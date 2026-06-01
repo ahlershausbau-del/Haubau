@@ -1526,7 +1526,7 @@ async function toggleDone(id, cur) {
   showLoading(t('ldgSave'));
   let { error } = await sb.from('punkte').update(upd).eq('id', id);
   // Fallback: column might not exist in older schemas — retry without it
-  if (error && /column .*geschlossen_at/i.test(error.message || '')) {
+  if (error && /geschlossen_at/i.test(error.message || JSON.stringify(error))) {
     console.warn('geschlossen_at column missing — updating status only');
     ({ error } = await sb.from('punkte').update({ status: newStatus }).eq('id', id));
   }
