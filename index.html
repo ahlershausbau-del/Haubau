@@ -600,7 +600,7 @@ create policy "anon_full" on public.album_photos  for all to anon using (true) w
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/lite.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
 <script>
 // ===================== SUPABASE CONFIG (fest eingebaut) =====================
 const SUPABASE_URL = 'https://knwlvsndlhlxozyqmvoe.supabase.co';
@@ -2901,16 +2901,16 @@ async function handleAlbumUpload(event) {
     const file = files[i];
     showLoading(t('albumCompressing', i+1, files.length));
 
-    // 1. Read EXIF date
+    // 1. Read EXIF date (exifr full build — DateTimeOriginal returned as JS Date)
     let takenAt = null;
     try {
       if (window.Exifr) {
-        const exif = await Exifr.parse(file, { tags: ['DateTimeOriginal','DateTime','CreateDate'], translateKeys: false });
-        takenAt = exif?.DateTimeOriginal || exif?.DateTime || exif?.CreateDate || null;
+        const exif = await Exifr.parse(file, { exif: true, tiff: true });
+        takenAt = exif?.DateTimeOriginal ?? exif?.DateTimeDigitized ?? exif?.DateTime ?? null;
       }
     } catch(e) { console.warn('EXIF read failed:', e); }
     if (!takenAt) takenAt = new Date();
-    if (!(takenAt instanceof Date)) { takenAt = new Date(takenAt); }
+    if (!(takenAt instanceof Date)) takenAt = new Date(takenAt);
     if (isNaN(takenAt.getTime())) takenAt = new Date();
 
     // 2. Compress
