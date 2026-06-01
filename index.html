@@ -221,6 +221,23 @@
   .album-photo.selected { outline:3px solid var(--primary); outline-offset:-3px; }
   .album-photo.selected .album-select-check { background:var(--primary); border-color:var(--primary); }
   .album-delete-bar { background:#fff0f0; border:1px solid #fca5a5; border-radius:12px; padding:12px 16px; margin-bottom:20px; display:none; align-items:center; gap:10px; flex-wrap:wrap; }
+
+  /* BAUPLAN */
+  .bauplan-week-block { margin-bottom:10px; background:white; border-radius:12px; border:1px solid var(--border); overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.05); }
+  .bauplan-week-head { display:grid; grid-template-columns:64px repeat(7,1fr); background:var(--bg); border-bottom:1px solid var(--border); }
+  .bauplan-week-kw { padding:8px 4px; font-size:0.7rem; font-weight:700; color:var(--muted); display:flex; align-items:center; justify-content:center; text-align:center; line-height:1.3; }
+  .bauplan-day-hd { padding:5px 2px; text-align:center; font-size:0.7rem; color:var(--muted); border-left:1px solid var(--border); }
+  .bauplan-day-hd .day-name { font-weight:600; }
+  .bauplan-day-hd .day-num { font-size:0.95rem; font-weight:700; color:var(--text); line-height:1.3; margin-top:1px; }
+  .bauplan-day-hd.is-today .day-num { background:var(--primary); color:white; border-radius:50%; width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center; }
+  .bauplan-day-hd.other-month { opacity:0.35; }
+  .bauplan-bars-wrap { display:grid; grid-template-columns:64px repeat(7,1fr); padding:4px 4px; row-gap:3px; min-height:34px; }
+  .bauplan-bar { border-radius:5px; padding:3px 7px; font-size:0.74rem; font-weight:600; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; transition:filter 0.15s; line-height:1.4; display:flex; align-items:center; }
+  .bauplan-bar:hover { filter:brightness(0.88); }
+  .bauplan-bar.cont-l { border-top-left-radius:0; border-bottom-left-radius:0; padding-left:3px; }
+  .bauplan-bar.cont-r { border-top-right-radius:0; border-bottom-right-radius:0; padding-right:3px; }
+  .bauplan-noentries { padding:8px 8px 8px 72px; color:var(--muted); font-size:0.8rem; font-style:italic; }
+  .bauplan-color-dot { display:inline-block; width:10px; height:10px; border-radius:50%; flex-shrink:0; margin-right:4px; }
 </style>
 </head>
 <body>
@@ -324,21 +341,35 @@ create table if not exists album_photos (
   erstellt timestamptz default now()
 );
 
+create table if not exists bauplan_eintraege (
+  id uuid default gen_random_uuid() primary key,
+  titel text not null,
+  beschreibung text,
+  gewerk text,
+  farbe text default '#3182ce',
+  datum_von date not null,
+  datum_bis date not null,
+  erstellt_von text,
+  erstellt timestamptz default now()
+);
+
 -- Berechtigungen für anon-Rolle (App nutzt anon key)
-grant select, insert, update, delete on public.etagen        to anon, authenticated, service_role;
-grant select, insert, update, delete on public.contacts      to anon, authenticated, service_role;
-grant select, insert, update, delete on public.punkte        to anon, authenticated, service_role;
-grant select, insert, update, delete on public.photos        to anon, authenticated, service_role;
-grant select, insert, update, delete on public.meta          to anon, authenticated, service_role;
-grant select, insert, update, delete on public.album_photos  to anon, authenticated, service_role;
+grant select, insert, update, delete on public.etagen             to anon, authenticated, service_role;
+grant select, insert, update, delete on public.contacts           to anon, authenticated, service_role;
+grant select, insert, update, delete on public.punkte             to anon, authenticated, service_role;
+grant select, insert, update, delete on public.photos             to anon, authenticated, service_role;
+grant select, insert, update, delete on public.meta               to anon, authenticated, service_role;
+grant select, insert, update, delete on public.album_photos       to anon, authenticated, service_role;
+grant select, insert, update, delete on public.bauplan_eintraege  to anon, authenticated, service_role;
 
 -- RLS aktivieren
-alter table public.etagen        enable row level security;
-alter table public.contacts      enable row level security;
-alter table public.punkte        enable row level security;
-alter table public.photos        enable row level security;
-alter table public.meta          enable row level security;
-alter table public.album_photos  enable row level security;
+alter table public.etagen             enable row level security;
+alter table public.contacts           enable row level security;
+alter table public.punkte             enable row level security;
+alter table public.photos             enable row level security;
+alter table public.meta               enable row level security;
+alter table public.album_photos       enable row level security;
+alter table public.bauplan_eintraege  enable row level security;
 
 -- Policies: anon darf alles (App hat eigenen Login-Schutz)
 create policy "anon_full" on public.etagen        for all to anon using (true) with check (true);
@@ -346,7 +377,8 @@ create policy "anon_full" on public.contacts      for all to anon using (true) w
 create policy "anon_full" on public.punkte        for all to anon using (true) with check (true);
 create policy "anon_full" on public.photos        for all to anon using (true) with check (true);
 create policy "anon_full" on public.meta          for all to anon using (true) with check (true);
-create policy "anon_full" on public.album_photos  for all to anon using (true) with check (true);</div>
+create policy "anon_full" on public.album_photos       for all to anon using (true) with check (true);
+create policy "anon_full" on public.bauplan_eintraege  for all to anon using (true) with check (true);</div>
 
     <div class="steps" style="margin-top:12px">
       <ol start="4">
@@ -393,6 +425,7 @@ create policy "anon_full" on public.album_photos  for all to anon using (true) w
     <button class="nav-link" onclick="showView('etagen');closeSidebar()">🏢 Etagen</button>
     <button class="nav-link" onclick="showView('verantwortliche');closeSidebar()">👷 Verantwortliche</button>
     <button class="nav-link" onclick="showView('album');closeSidebar()">📷 Fotoalbum</button>
+    <button class="nav-link" onclick="showView('bauplan');closeSidebar()">📅 Bauplanung</button>
   </div>
   <div class="sidebar-footer">
     <div class="sidebar-user" id="nav-user-pill">👤</div>
@@ -547,10 +580,53 @@ create policy "anon_full" on public.album_photos  for all to anon using (true) w
   </div>
   <div id="album-content"></div>
 </div>
+
+<!-- ==================== BAUPLANUNG ==================== -->
+<div id="view-bauplan" class="view">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+    <h1 id="bauplan-title">📅 Bauplanung</h1>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:4px;background:white;border:1px solid var(--border);border-radius:10px;padding:3px 6px">
+        <button class="btn btn-ghost btn-sm" onclick="prevBauplanMonth()" style="padding:4px 10px;font-size:1rem">◀</button>
+        <span id="bauplan-month-label" style="font-size:1rem;font-weight:700;min-width:190px;text-align:center"></span>
+        <button class="btn btn-ghost btn-sm" onclick="nextBauplanMonth()" style="padding:4px 10px;font-size:1rem">▶</button>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="bauplanGoToday()" id="bauplan-today-btn">Heute</button>
+      <button class="btn btn-primary" onclick="openBauplanModal(null)" id="bauplan-new-btn">+ Neuer Eintrag</button>
+    </div>
+  </div>
+  <div id="bauplan-content"></div>
+</div>
 </div><!-- /main-content -->
 </div><!-- /main-app -->
 
 <!-- MODALS -->
+<div class="modal-overlay" id="modal-bauplan">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <h2 id="bauplan-modal-title">Neuer Eintrag</h2>
+      <button class="modal-close" onclick="closeModal('modal-bauplan')">×</button>
+    </div>
+    <div class="form-group"><label id="bp-label-titel">Titel *</label><input id="bp-titel" type="text" placeholder="z.B. Maurerarbeiten"></div>
+    <div class="form-group"><label id="bp-label-gewerk">Gewerk / Wer</label><input id="bp-gewerk" type="text" placeholder="z.B. Maurer GmbH"></div>
+    <div class="grid-2">
+      <div class="form-group"><label id="bp-label-von">Von *</label><input id="bp-von" type="date"></div>
+      <div class="form-group"><label id="bp-label-bis">Bis *</label><input id="bp-bis" type="date"></div>
+    </div>
+    <div class="form-group"><label id="bp-label-beschreibung">Beschreibung</label><textarea id="bp-beschreibung" placeholder="Was wird gemacht?" style="min-height:60px"></textarea></div>
+    <div class="form-group">
+      <label id="bp-label-farbe">Farbe</label>
+      <div id="bp-color-swatches" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"></div>
+      <input type="hidden" id="bp-farbe">
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;align-items:center">
+      <button class="btn btn-danger btn-sm" id="bp-del-btn" onclick="deleteBauplanEntry()" style="margin-right:auto;display:none" id="bp-del-btn">🗑️ Löschen</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-bauplan')" id="bp-cancel-btn">Abbrechen</button>
+      <button class="btn btn-primary" onclick="saveBauplanEntry()" id="bp-save-btn">💾 Speichern</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-detail">
   <div class="modal">
     <div class="modal-header">
@@ -631,7 +707,7 @@ const LANG = {
     /* Sidebar */
     navDashboard:'🗺️ Dashboard', navListe:'📋 Punkte', navNeu:'➕ Neuer Punkt',
     navEtagen:'🏢 Etagen', navVerantwortliche:'👷 Verantwortliche',
-    navAlbum:'📷 Fotoalbum',
+    navAlbum:'📷 Fotoalbum', navBauplan:'📅 Bauplanung',
     navLogout:'🚪 Abmelden', langToggle:'🇬🇧 EN',
     sidebarBrand:'🏗️ Hausbau<br>Nacharbeit', topbarBrand:'🏗️ Nacharbeit',
     /* Login */
@@ -786,12 +862,24 @@ const LANG = {
     albumSelCount:(n)=>n===0?'Nichts ausgewählt':`${n} ausgewählt`,
     albumDeleteSelected:(n)=>`🗑️ Löschen (${n})`,
     albumDeleteSelectedConfirm:(n)=>`${n} Foto${n!==1?'s':''} wirklich löschen?`,
+    /* Bauplan */
+    bauplanTitle:'📅 Bauplanung', bauplanNewBtn:'+ Neuer Eintrag', bauplanToday:'Heute',
+    bauplanKW:(n)=>`KW ${n}`, bauplanEmpty:'Keine Einträge vorhanden', bauplanEmptyWeek:'Keine Einträge',
+    bauplanModalNew:'Neuer Eintrag', bauplanModalEdit:'Eintrag bearbeiten',
+    bpLabelTitel:'Titel *', bpPlaceholderTitel:'z.B. Maurerarbeiten',
+    bpLabelGewerk:'Gewerk / Wer', bpPlaceholderGewerk:'z.B. Maurer GmbH',
+    bpLabelVon:'Von *', bpLabelBis:'Bis *',
+    bpLabelDesc:'Beschreibung', bpPlaceholderDesc:'Was wird gemacht?',
+    bpLabelFarbe:'Farbe', bpSave:'💾 Speichern', bpCancel:'Abbrechen', bpDelete:'🗑️ Löschen',
+    bpDeleteConfirm:'Eintrag wirklich löschen?',
+    bpAlertTitleReq:'Bitte Titel eingeben', bpAlertDateReq:'Bitte Von- und Bis-Datum eingeben',
+    bpAlertDateOrder:'Das Enddatum muss nach dem Startdatum liegen',
   },
   en: {
     /* Sidebar */
     navDashboard:'🗺️ Dashboard', navListe:'📋 Items', navNeu:'➕ New Item',
     navEtagen:'🏢 Floors', navVerantwortliche:'👷 Responsible',
-    navAlbum:'📷 Photo Album',
+    navAlbum:'📷 Photo Album', navBauplan:'📅 Site Planner',
     navLogout:'🚪 Log Out', langToggle:'🇩🇪 DE',
     sidebarBrand:'🏗️ Construction<br>Rework', topbarBrand:'🏗️ Rework',
     /* Login */
@@ -946,6 +1034,18 @@ const LANG = {
     albumSelCount:(n)=>n===0?'Nothing selected':`${n} selected`,
     albumDeleteSelected:(n)=>`🗑️ Delete (${n})`,
     albumDeleteSelectedConfirm:(n)=>`Really delete ${n} photo${n!==1?'s':''}?`,
+    /* Bauplan */
+    bauplanTitle:'📅 Site Planner', bauplanNewBtn:'+ New Entry', bauplanToday:'Today',
+    bauplanKW:(n)=>`Week ${n}`, bauplanEmpty:'No entries available', bauplanEmptyWeek:'No entries',
+    bauplanModalNew:'New Entry', bauplanModalEdit:'Edit Entry',
+    bpLabelTitel:'Title *', bpPlaceholderTitel:'e.g. Masonry work',
+    bpLabelGewerk:'Trade / Who', bpPlaceholderGewerk:'e.g. Mason GmbH',
+    bpLabelVon:'From *', bpLabelBis:'To *',
+    bpLabelDesc:'Description', bpPlaceholderDesc:'What will be done?',
+    bpLabelFarbe:'Color', bpSave:'💾 Save', bpCancel:'Cancel', bpDelete:'🗑️ Delete',
+    bpDeleteConfirm:'Really delete this entry?',
+    bpAlertTitleReq:'Please enter a title', bpAlertDateReq:'Please enter from/to dates',
+    bpAlertDateOrder:'End date must be after start date',
   }
 };
 
@@ -974,7 +1074,7 @@ function applyLang() {
   const topBrand = document.querySelector('.topbar-brand');
   if (topBrand) topBrand.textContent = t('topbarBrand');
   const navLinks = document.querySelectorAll('.nav-link');
-  const navKeys = ['navDashboard','navListe','navNeu','navEtagen','navVerantwortliche','navAlbum'];
+  const navKeys = ['navDashboard','navListe','navNeu','navEtagen','navVerantwortliche','navAlbum','navBauplan'];
   navLinks.forEach((el,i)=>{ if(navKeys[i]) el.innerHTML = t(navKeys[i]); });
   const logoutBtn = document.querySelector('.sidebar-logout');
   if (logoutBtn) logoutBtn.textContent = t('navLogout');
@@ -1255,13 +1355,14 @@ function showView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
   document.getElementById('view-' + name).classList.add('active');
-  ['dashboard','liste','neu','etagen','verantwortliche','album'].forEach((n, i) => { if (n === name) document.querySelectorAll('.nav-link')[i]?.classList.add('active'); });
+  ['dashboard','liste','neu','etagen','verantwortliche','album','bauplan'].forEach((n, i) => { if (n === name) document.querySelectorAll('.nav-link')[i]?.classList.add('active'); });
   if (name === 'neu' && !editingId) resetForm();
   if (name === 'etagen') renderEtagen();
   if (name === 'verantwortliche') renderContacts();
   if (name === 'liste') renderListe();
   if (name === 'dashboard') renderDashboard();
   if (name === 'album') renderAlbum();
+  if (name === 'bauplan') renderBauplan();
 }
 
 // ===================== STATS =====================
@@ -2820,6 +2921,250 @@ async function exportExcelMitBildern(filter) {
     hideLoading();
     alert(t('alertExcelErr') + e.message);
   }
+}
+
+// ===================== BAUPLANUNG =====================
+let allBauplan = [];
+let bauplanLoaded = false;
+let editingBauplanId = null;
+let bauplanYear = new Date().getFullYear();
+let bauplanMonthIdx = new Date().getMonth(); // 0-based
+
+const BAUPLAN_COLORS = [
+  '#e53e3e','#dd6b20','#d69e2e','#38a169','#3182ce',
+  '#805ad5','#d53f8c','#319795','#2b6cb0','#276749',
+  '#6b46c1','#744210','#97266d','#285e61'
+];
+
+function getContrastColor(hex) {
+  if (!hex || hex.length < 7) return '#ffffff';
+  const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
+  return (0.299*r+0.587*g+0.114*b)/255 > 0.52 ? '#111111' : '#ffffff';
+}
+
+function assignBauplanLanes(bars) {
+  const sorted = [...bars].sort((a,b) => a.colStart - b.colStart);
+  const laneEnds = [];
+  return sorted.map(bar => {
+    let li = laneEnds.findIndex(e => e < bar.colStart);
+    if (li === -1) li = laneEnds.length;
+    laneEnds[li] = bar.colEnd;
+    return { ...bar, lane: li + 1 };
+  });
+}
+
+async function loadBauplan() {
+  const { data, error } = await sb.from('bauplan_eintraege').select('*').order('datum_von');
+  if (!error) allBauplan = data || [];
+  bauplanLoaded = true;
+}
+
+function updateBauplanHeader() {
+  const loc = currentLang === 'de' ? 'de-DE' : 'en-GB';
+  const lbl = new Date(bauplanYear, bauplanMonthIdx, 1).toLocaleDateString(loc, { month:'long', year:'numeric' });
+  const el = document.getElementById('bauplan-month-label');
+  if (el) el.textContent = lbl;
+  const todayBtn = document.getElementById('bauplan-today-btn');
+  if (todayBtn) todayBtn.textContent = t('bauplanToday');
+  const newBtn = document.getElementById('bauplan-new-btn');
+  if (newBtn) newBtn.textContent = t('bauplanNewBtn');
+}
+
+async function renderBauplan() {
+  updateBauplanHeader();
+  if (!bauplanLoaded) {
+    showLoading(t('ldgData'));
+    await loadBauplan();
+    hideLoading();
+  }
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const firstDay = new Date(bauplanYear, bauplanMonthIdx, 1);
+  const lastDay  = new Date(bauplanYear, bauplanMonthIdx + 1, 0);
+
+  // Entries overlapping this month
+  const monthEntries = allBauplan.filter(e => {
+    const von = new Date(e.datum_von), bis = new Date(e.datum_bis + 'T23:59:59');
+    return von <= lastDay && bis >= firstDay;
+  });
+
+  // Build week starts (Mondays) that cover the month
+  const weeks = [];
+  const ws0 = new Date(firstDay);
+  const dow0 = ws0.getDay();
+  ws0.setDate(ws0.getDate() - (dow0 === 0 ? 6 : dow0 - 1));
+  let ws = new Date(ws0);
+  while (ws <= lastDay) { weeks.push(new Date(ws)); ws.setDate(ws.getDate()+7); }
+
+  const dayNamesDE = ['Mo','Di','Mi','Do','Fr','Sa','So'];
+  const dayNamesEN = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const dayNames = currentLang === 'de' ? dayNamesDE : dayNamesEN;
+
+  let html = '';
+  for (const weekStart of weeks) {
+    const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate()+6);
+    const { week: kwNum } = getCalendarWeek(weekStart);
+    const days = Array.from({length:7}, (_,i) => { const d=new Date(weekStart); d.setDate(d.getDate()+i); return d; });
+
+    // Filter entries active in this week
+    const wEntries = monthEntries.filter(e => {
+      const von = new Date(e.datum_von), bis = new Date(e.datum_bis + 'T23:59:59');
+      return von <= weekEnd && bis >= weekStart;
+    });
+
+    // Build bar data (clamp to this week's 0–6 day range)
+    const bars = wEntries.map(e => {
+      const von = new Date(e.datum_von), bis = new Date(e.datum_bis);
+      const cs = Math.max(0, Math.round((von - weekStart) / 86400000));
+      const ce = Math.min(6, Math.round((bis - weekStart) / 86400000));
+      return { ...e, colStart:cs, colEnd:ce, contL: von < weekStart, contR: bis > weekEnd };
+    });
+
+    const barsL = assignBauplanLanes(bars);
+    const laneCount = barsL.length ? Math.max(...barsL.map(b=>b.lane)) : 0;
+
+    // Week header row
+    html += `<div class="bauplan-week-block">`;
+    html += `<div class="bauplan-week-head"><div class="bauplan-week-kw">${t('bauplanKW', kwNum)}</div>`;
+    days.forEach((d,i) => {
+      const isToday = d.getTime() === today.getTime();
+      const otherMo = d.getMonth() !== bauplanMonthIdx;
+      html += `<div class="bauplan-day-hd${isToday?' is-today':''}${otherMo?' other-month':''}">
+        <div class="day-name">${dayNames[i]}</div>
+        <div class="day-num">${d.getDate()}</div>
+      </div>`;
+    });
+    html += `</div>`; // week-head
+
+    // Bars grid
+    if (laneCount > 0) {
+      html += `<div class="bauplan-bars-wrap" style="grid-template-rows:repeat(${laneCount},28px);padding:4px">`;
+      // Spacer for KW-column
+      html += `<div style="grid-column:1;grid-row:1/${laneCount+1}"></div>`;
+      for (const bar of barsL) {
+        const tc = getContrastColor(bar.farbe || '#3182ce');
+        const cls = ['bauplan-bar', bar.contL?'cont-l':'', bar.contR?'cont-r':''].filter(Boolean).join(' ');
+        const lbl = `${bar.contL?'◀ ':''}<span class="bauplan-color-dot" style="background:rgba(255,255,255,0.35)"></span>${esc(bar.titel)}${bar.gewerk?' · <em style="font-weight:400;font-style:normal;opacity:0.9">'+esc(bar.gewerk)+'</em>':''}${bar.contR?' ▶':''}`;
+        html += `<div class="${cls}"
+          style="grid-column:${bar.colStart+2}/${bar.colEnd+3};grid-row:${bar.lane};background:${bar.farbe||'#3182ce'};color:${tc}"
+          onclick="openBauplanModal('${bar.id}')"
+          title="${esc(bar.titel)}${bar.gewerk?' — '+esc(bar.gewerk):''}${bar.beschreibung?'\n'+esc(bar.beschreibung):''}">
+          ${lbl}
+        </div>`;
+      }
+      html += `</div>`;
+    } else {
+      html += `<div class="bauplan-noentries">${t('bauplanEmptyWeek')}</div>`;
+    }
+    html += `</div>`; // week-block
+  }
+
+  document.getElementById('bauplan-content').innerHTML = html ||
+    `<div class="empty-state"><div class="icon">📅</div><p>${t('bauplanEmpty')}</p></div>`;
+}
+
+function prevBauplanMonth() {
+  bauplanMonthIdx--;
+  if (bauplanMonthIdx < 0) { bauplanMonthIdx = 11; bauplanYear--; }
+  renderBauplan();
+}
+function nextBauplanMonth() {
+  bauplanMonthIdx++;
+  if (bauplanMonthIdx > 11) { bauplanMonthIdx = 0; bauplanYear++; }
+  renderBauplan();
+}
+function bauplanGoToday() {
+  bauplanYear = new Date().getFullYear();
+  bauplanMonthIdx = new Date().getMonth();
+  renderBauplan();
+}
+
+// ---- Bauplan Modal ----
+function renderColorSwatches(selected) {
+  const wrap = document.getElementById('bp-color-swatches');
+  if (!wrap) return;
+  wrap.innerHTML = BAUPLAN_COLORS.map(c => `
+    <div onclick="selectBauplanColor('${c}')"
+      style="width:28px;height:28px;border-radius:50%;background:${c};cursor:pointer;
+             border:3px solid ${c===selected?'#111':'transparent'};
+             box-shadow:0 1px 4px rgba(0,0,0,0.25);transition:transform 0.1s;flex-shrink:0"
+      onmouseover="this.style.transform='scale(1.2)'"
+      onmouseout="this.style.transform='scale(1)'"
+    ></div>`).join('');
+}
+function selectBauplanColor(c) {
+  document.getElementById('bp-farbe').value = c;
+  renderColorSwatches(c);
+}
+
+function openBauplanModal(id) {
+  editingBauplanId = id || null;
+  const entry = id ? allBauplan.find(e => e.id === id) : null;
+  document.getElementById('bauplan-modal-title').textContent = entry ? t('bauplanModalEdit') : t('bauplanModalNew');
+  document.getElementById('bp-titel').value = entry?.titel || '';
+  document.getElementById('bp-gewerk').value = entry?.gewerk || '';
+  document.getElementById('bp-von').value = entry?.datum_von || '';
+  document.getElementById('bp-bis').value = entry?.datum_bis || '';
+  document.getElementById('bp-beschreibung').value = entry?.beschreibung || '';
+  const selColor = entry?.farbe || BAUPLAN_COLORS[Math.floor(Math.random()*BAUPLAN_COLORS.length)];
+  document.getElementById('bp-farbe').value = selColor;
+  renderColorSwatches(selColor);
+  // Labels
+  document.getElementById('bp-label-titel').textContent = t('bpLabelTitel');
+  document.getElementById('bp-label-gewerk').textContent = t('bpLabelGewerk');
+  document.getElementById('bp-label-von').textContent = t('bpLabelVon');
+  document.getElementById('bp-label-bis').textContent = t('bpLabelBis');
+  document.getElementById('bp-label-beschreibung').textContent = t('bpLabelDesc');
+  document.getElementById('bp-label-farbe').textContent = t('bpLabelFarbe');
+  document.getElementById('bp-titel').placeholder = t('bpPlaceholderTitel');
+  document.getElementById('bp-gewerk').placeholder = t('bpPlaceholderGewerk');
+  document.getElementById('bp-beschreibung').placeholder = t('bpPlaceholderDesc');
+  document.getElementById('bp-save-btn').textContent = t('bpSave');
+  document.getElementById('bp-cancel-btn').textContent = t('bpCancel');
+  const delBtn = document.getElementById('bp-del-btn');
+  if (delBtn) { delBtn.textContent = t('bpDelete'); delBtn.style.display = entry ? '' : 'none'; }
+  openModal('modal-bauplan');
+  setTimeout(() => document.getElementById('bp-titel').focus(), 50);
+}
+
+async function saveBauplanEntry() {
+  const titel = document.getElementById('bp-titel').value.trim();
+  const von   = document.getElementById('bp-von').value;
+  const bis   = document.getElementById('bp-bis').value;
+  if (!titel) { alert(t('bpAlertTitleReq')); return; }
+  if (!von || !bis) { alert(t('bpAlertDateReq')); return; }
+  if (bis < von) { alert(t('bpAlertDateOrder')); return; }
+  const payload = {
+    titel,
+    gewerk:       document.getElementById('bp-gewerk').value.trim() || null,
+    datum_von:    von,
+    datum_bis:    bis,
+    beschreibung: document.getElementById('bp-beschreibung').value.trim() || null,
+    farbe:        document.getElementById('bp-farbe').value || BAUPLAN_COLORS[0],
+    erstellt_von: currentUser
+  };
+  showLoading(t('ldgSave'));
+  if (editingBauplanId) {
+    const { data } = await sb.from('bauplan_eintraege').update(payload).eq('id', editingBauplanId).select().single();
+    if (data) { const idx = allBauplan.findIndex(e => e.id === editingBauplanId); if (idx >= 0) allBauplan[idx] = data; }
+  } else {
+    const { data } = await sb.from('bauplan_eintraege').insert(payload).select().single();
+    if (data) { allBauplan.push(data); allBauplan.sort((a,b) => a.datum_von.localeCompare(b.datum_von)); }
+  }
+  hideLoading();
+  closeModal('modal-bauplan');
+  renderBauplan();
+}
+
+async function deleteBauplanEntry() {
+  if (!editingBauplanId) return;
+  if (!confirm(t('bpDeleteConfirm'))) return;
+  showLoading(t('ldgDelete'));
+  await sb.from('bauplan_eintraege').delete().eq('id', editingBauplanId);
+  allBauplan = allBauplan.filter(e => e.id !== editingBauplanId);
+  hideLoading();
+  closeModal('modal-bauplan');
+  renderBauplan();
 }
 
 // ===================== ALBUM =====================
