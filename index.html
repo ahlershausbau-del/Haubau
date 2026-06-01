@@ -562,10 +562,12 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
       <button id="album-select-btn" class="btn btn-ghost" onclick="toggleAlbumDeleteMode()">🗑️ Auswählen</button>
       <button id="album-camera-btn" class="btn btn-ghost" onclick="document.getElementById('album-camera-input').click()">📷 Kamera</button>
       <button id="album-upload-btn" class="btn btn-primary" onclick="document.getElementById('album-file-input').click()">📤 Fotos hochladen</button>
+      <button id="album-exif-test-btn" class="btn btn-ghost btn-sm" onclick="document.getElementById('album-exif-test-input').click()" title="EXIF-Test: zeigt alle Metadaten eines Fotos">🔍 EXIF-Test</button>
     </div>
   </div>
   <input type="file" id="album-file-input" accept="image/*" multiple style="display:none" onchange="handleAlbumUpload(event)">
   <input type="file" id="album-camera-input" accept="image/*" capture="environment" style="display:none" onchange="handleAlbumUpload(event)">
+  <input type="file" id="album-exif-test-input" accept="image/*" style="display:none" onchange="testExifFile(event)">
   <!-- Delete-mode bar -->
   <div class="album-delete-bar" id="album-delete-bar">
     <span id="album-del-count" style="font-weight:600;color:var(--danger);min-width:100px">0 ausgewählt</span>
@@ -3404,34 +3406,71 @@ async function deleteSelectedAlbum() {
   if (zone) zone.style.display = '';
 }
 
+// Wait until exifr is loaded (script tag is sync but be defensive)
+async function ensureExifrLoaded() {
+  if (window.exifr || window.Exifr) return true;
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 100));
+    if (window.exifr || window.Exifr) return true;
+  }
+  return false;
+}
+
 async function handleAlbumUpload(event) {
   const files = Array.from(event.target?.files || event.files || []).filter(f => f.type.startsWith('image/'));
   if (event.target?.value !== undefined) { try { event.target.value = ''; } catch {} }
   if (!files.length) return;
 
+  showLoading('Bibliothek laden...');
+  const exifrReady = await ensureExifrLoaded();
+  const exifrLib = window.exifr || window.Exifr;
+  console.log('exifr loaded?', exifrReady, 'lib:', !!exifrLib);
+
+  // Track which source the date came from per photo
+  const sources = { exif: 0, lastmod: 0, now: 0 };
+  const details = [];
+
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     showLoading(t('albumCompressing', i+1, files.length));
 
-    // 1. Read EXIF date — global is "exifr" (lowercase) in UMD browser build
     let takenAt = null;
-    try {
-      const exifrLib = window.exifr || window.Exifr;
-      if (exifrLib && typeof exifrLib.parse === 'function') {
-        const exif = await exifrLib.parse(file);
-        console.log('EXIF for', file.name, exif);
-        takenAt = exif?.DateTimeOriginal ?? exif?.DateTimeDigitized ?? exif?.CreateDate ?? exif?.ModifyDate ?? exif?.DateTime ?? null;
-      } else {
-        console.warn('exifr library not loaded — falling back to file.lastModified');
-      }
-    } catch(e) { console.warn('EXIF read failed for', file.name, ':', e); }
+    let source = 'now';
 
-    // Fallback chain: EXIF → file.lastModified (browser preserves photo mtime) → now
-    if (!takenAt && file.lastModified) takenAt = new Date(file.lastModified);
-    if (!takenAt) takenAt = new Date();
-    if (!(takenAt instanceof Date)) takenAt = new Date(takenAt);
-    if (isNaN(takenAt.getTime())) takenAt = new Date();
-    console.log('→ saving', file.name, 'with date', takenAt.toISOString());
+    // 1. Try EXIF
+    if (exifrReady && exifrLib && typeof exifrLib.parse === 'function') {
+      try {
+        const exif = await exifrLib.parse(file);
+        console.log('EXIF parsed for', file.name, exif);
+        const exifDate = exif?.DateTimeOriginal ?? exif?.DateTimeDigitized ?? exif?.CreateDate ?? exif?.ModifyDate ?? exif?.DateTime ?? null;
+        if (exifDate) {
+          takenAt = (exifDate instanceof Date) ? exifDate : new Date(exifDate);
+          if (!isNaN(takenAt.getTime())) source = 'exif';
+          else takenAt = null;
+        }
+      } catch(e) { console.warn('EXIF parse failed for', file.name, ':', e); }
+    }
+
+    // 2. Fallback: file.lastModified
+    if (!takenAt && file.lastModified) {
+      const lm = new Date(file.lastModified);
+      // Only accept if it's not within the last 60 seconds (= likely just downloaded)
+      const ageSec = (Date.now() - lm.getTime()) / 1000;
+      if (!isNaN(lm.getTime()) && ageSec > 60) {
+        takenAt = lm;
+        source = 'lastmod';
+      }
+    }
+
+    // 3. Last resort: now
+    if (!takenAt) {
+      takenAt = new Date();
+      source = 'now';
+    }
+
+    sources[source]++;
+    details.push({ name: file.name, date: takenAt.toISOString(), source });
+    console.log(`→ ${file.name}: ${takenAt.toISOString()} (source: ${source})`);
 
     // 2. Compress
     const base64 = await compressToBase64(file);
@@ -3450,6 +3489,75 @@ async function handleAlbumUpload(event) {
   allAlbumPhotos.sort((a,b) => new Date(b.aufgenommen_am) - new Date(a.aufgenommen_am));
   hideLoading();
   renderAlbum();
+
+  // Show diagnostic report
+  showUploadReport(sources, details, exifrReady);
+}
+
+function showUploadReport(sources, details, exifrReady) {
+  const total = sources.exif + sources.lastmod + sources.now;
+  let msg = `📊 Upload-Bericht: ${total} Foto${total!==1?'s':''}\n\n`;
+  msg += exifrReady ? '✅ EXIF-Bibliothek geladen\n\n' : '❌ EXIF-Bibliothek NICHT geladen!\n\n';
+  msg += `📷 Aus EXIF (Aufnahmedatum):         ${sources.exif}\n`;
+  msg += `💾 Aus Datei-Zeitstempel:             ${sources.lastmod}\n`;
+  msg += `⚠️ Heute (kein EXIF, kein Zeitstempel): ${sources.now}\n`;
+
+  if (sources.now > 0) {
+    msg += `\nDie ${sources.now} Foto${sources.now!==1?'s'} ohne EXIF/Zeitstempel:\n`;
+    details.filter(d => d.source === 'now').slice(0, 5).forEach(d => {
+      msg += `  • ${d.name}\n`;
+    });
+    if (sources.now > 5) msg += `  ... und ${sources.now - 5} weitere\n`;
+    msg += `\nHinweis: WhatsApp, Screenshots und manche Cloud-Dienste\nentfernen EXIF-Daten beim Speichern.\nNutze den "🔍 EXIF-Test" Button für Details.`;
+  }
+  alert(msg);
+}
+
+async function testExifFile(event) {
+  const file = event.target.files?.[0];
+  try { event.target.value = ''; } catch {}
+  if (!file) return;
+
+  await ensureExifrLoaded();
+  const exifrLib = window.exifr || window.Exifr;
+
+  let report = `🔍 EXIF-Test\n\n`;
+  report += `Datei: ${file.name}\n`;
+  report += `Typ: ${file.type}\n`;
+  report += `Größe: ${(file.size/1024).toFixed(1)} KB\n`;
+  report += `Datei-Zeitstempel (lastModified): ${file.lastModified ? new Date(file.lastModified).toLocaleString('de-DE') : '—'}\n\n`;
+
+  if (!exifrLib) { alert(report + '❌ exifr-Bibliothek NICHT geladen!\nCDN evtl. blockiert.'); return; }
+
+  try {
+    const exif = await exifrLib.parse(file);
+    if (!exif || Object.keys(exif).length === 0) {
+      report += `📷 EXIF-Daten: KEINE gefunden\n\n`;
+      report += `→ Dieses Foto hat keine EXIF-Daten.\nMögliche Gründe:\n• Screenshot\n• Foto kam über WhatsApp/Signal/Telegram\n• Foto wurde von einer Cloud-App gespeichert\n• Bild wurde bearbeitet und neu gespeichert`;
+    } else {
+      report += `📷 EXIF-Daten gefunden (${Object.keys(exif).length} Felder):\n\n`;
+      const dateFields = ['DateTimeOriginal','DateTimeDigitized','CreateDate','ModifyDate','DateTime'];
+      report += `--- Datums-Felder ---\n`;
+      let foundDate = false;
+      dateFields.forEach(f => {
+        if (exif[f]) {
+          const d = (exif[f] instanceof Date) ? exif[f] : new Date(exif[f]);
+          report += `${f}: ${d.toLocaleString('de-DE')}\n`;
+          foundDate = true;
+        }
+      });
+      if (!foundDate) report += `(keine Datums-Felder in EXIF)\n`;
+      report += `\n--- Andere wichtige Felder ---\n`;
+      ['Make','Model','LensModel','Software','ImageWidth','ImageHeight','Orientation'].forEach(f => {
+        if (exif[f] !== undefined) report += `${f}: ${exif[f]}\n`;
+      });
+    }
+  } catch(e) {
+    report += `❌ Parse-Fehler: ${e.message}`;
+  }
+
+  console.log('EXIF-Test:', file.name);
+  alert(report);
 }
 
 function albumDragOver(e) {
