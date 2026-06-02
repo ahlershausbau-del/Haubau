@@ -3212,31 +3212,68 @@ function fmtMonthHeader(year, month0) {
 }
 
 async function loadAlbumPhotos() {
-  const { data, error } = await sb.from('album_photos').select('*').order('aufgenommen_am', { ascending: false });
-  if (error) {
-    console.error('loadAlbumPhotos failed:', error);
-    const isMissing = /album_photos/i.test(error.message || '') && /not exist|schema cache|does not exist/i.test(error.message || '');
-    let msg = '⚠️ Fotoalbum konnte nicht geladen werden:\n\n' + (error.message || JSON.stringify(error));
-    if (isMissing) {
-      msg += '\n\n➡️ Die Tabelle "album_photos" fehlt in deiner Supabase-Datenbank.\n\n' +
-             'Lösung: Im Supabase Dashboard → SQL Editor folgendes ausführen:\n\n' +
-             'create table if not exists album_photos (\n' +
-             '  id uuid default gen_random_uuid() primary key,\n' +
-             '  base64 text not null,\n' +
-             '  aufgenommen_am timestamptz not null,\n' +
-             '  hochgeladen_von text,\n' +
-             '  erstellt timestamptz default now()\n' +
-             ');\n' +
-             'grant select, insert, update, delete on public.album_photos to anon, authenticated, service_role;\n' +
-             'alter table public.album_photos enable row level security;\n' +
-             'create policy "anon_full" on public.album_photos for all to anon using (true) with check (true);';
+  // Batched loading: SELECT * with base64 is huge and easily hits the
+  // Supabase free-tier statement_timeout (~3s). We page in small chunks,
+  // re-render after each batch, so the user sees photos appear progressively.
+  allAlbumPhotos = [];
+  albumLoaded = true; // set early so renderAlbum doesn't recursively call us
+  let pageSize = 20;
+  let offset = 0;
+  let firstBatch = true;
+  while (true) {
+    showLoading(`Lade Fotos... (${allAlbumPhotos.length} geladen)`);
+    const { data, error } = await sb.from('album_photos')
+      .select('*')
+      .order('aufgenommen_am', { ascending: false })
+      .range(offset, offset + pageSize - 1);
+    if (error) {
+      console.error('loadAlbumPhotos batch failed (offset=' + offset + ', size=' + pageSize + '):', error);
+      const msgTxt = error.message || JSON.stringify(error);
+      const isTimeout = /statement timeout|canceling statement/i.test(msgTxt);
+      const isMissing = /album_photos/i.test(msgTxt) && /not exist|schema cache|does not exist/i.test(msgTxt);
+      // On timeout: try smaller batch size before giving up
+      if (isTimeout && pageSize > 3) {
+        pageSize = Math.max(3, Math.floor(pageSize / 2));
+        console.warn('Timeout — retrying with smaller batch size: ' + pageSize);
+        continue;
+      }
+      hideLoading();
+      let msg = '⚠️ Fotoalbum konnte nicht ' + (firstBatch ? 'geladen' : 'vollständig geladen') + ' werden:\n\n' + msgTxt;
+      if (!firstBatch) msg += '\n\n(' + allAlbumPhotos.length + ' Fotos wurden geladen bevor der Fehler auftrat.)';
+      if (isMissing) {
+        msg += '\n\n➡️ Die Tabelle "album_photos" fehlt in deiner Supabase-Datenbank.\n\n' +
+               'Lösung: Im Supabase Dashboard → SQL Editor folgendes ausführen:\n\n' +
+               'create table if not exists album_photos (\n' +
+               '  id uuid default gen_random_uuid() primary key,\n' +
+               '  base64 text not null,\n' +
+               '  aufgenommen_am timestamptz not null,\n' +
+               '  hochgeladen_von text,\n' +
+               '  erstellt timestamptz default now()\n' +
+               ');\n' +
+               'grant select, insert, update, delete on public.album_photos to anon, authenticated, service_role;\n' +
+               'alter table public.album_photos enable row level security;\n' +
+               'create policy "anon_full" on public.album_photos for all to anon using (true) with check (true);';
+      } else if (isTimeout) {
+        msg += '\n\n➡️ Supabase-Statement-Timeout. Lösung im SQL Editor:\n\n' +
+               'alter role anon set statement_timeout = \'30s\';\n' +
+               'alter role authenticated set statement_timeout = \'30s\';\n\n' +
+               'Danach Seite neu laden.';
+      }
+      alert(msg);
+      return;
     }
-    alert(msg);
-    allAlbumPhotos = [];
-  } else {
-    allAlbumPhotos = data || [];
+    if (!data || !data.length) break;
+    allAlbumPhotos.push(...data);
+    firstBatch = false;
+    // Progressive UI update — show what we have so far while remaining batches load
+    if (document.getElementById('view-album')?.classList.contains('active')) {
+      try { renderAlbum(); } catch(e) { console.warn('progressive render failed:', e); }
+    }
+    if (data.length < pageSize) break;
+    offset += pageSize;
+    // Yield to UI thread so it can paint
+    await new Promise(r => setTimeout(r, 0));
   }
-  albumLoaded = true;
 }
 
 async function renderAlbum() {
