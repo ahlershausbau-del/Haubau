@@ -3213,7 +3213,29 @@ function fmtMonthHeader(year, month0) {
 
 async function loadAlbumPhotos() {
   const { data, error } = await sb.from('album_photos').select('*').order('aufgenommen_am', { ascending: false });
-  if (!error) allAlbumPhotos = data || [];
+  if (error) {
+    console.error('loadAlbumPhotos failed:', error);
+    const isMissing = /album_photos/i.test(error.message || '') && /not exist|schema cache|does not exist/i.test(error.message || '');
+    let msg = '⚠️ Fotoalbum konnte nicht geladen werden:\n\n' + (error.message || JSON.stringify(error));
+    if (isMissing) {
+      msg += '\n\n➡️ Die Tabelle "album_photos" fehlt in deiner Supabase-Datenbank.\n\n' +
+             'Lösung: Im Supabase Dashboard → SQL Editor folgendes ausführen:\n\n' +
+             'create table if not exists album_photos (\n' +
+             '  id uuid default gen_random_uuid() primary key,\n' +
+             '  base64 text not null,\n' +
+             '  aufgenommen_am timestamptz not null,\n' +
+             '  hochgeladen_von text,\n' +
+             '  erstellt timestamptz default now()\n' +
+             ');\n' +
+             'grant select, insert, update, delete on public.album_photos to anon, authenticated, service_role;\n' +
+             'alter table public.album_photos enable row level security;\n' +
+             'create policy "anon_full" on public.album_photos for all to anon using (true) with check (true);';
+    }
+    alert(msg);
+    allAlbumPhotos = [];
+  } else {
+    allAlbumPhotos = data || [];
+  }
   albumLoaded = true;
 }
 
@@ -3495,11 +3517,21 @@ async function handleAlbumUpload(event) {
 
     // 3. Save
     showLoading(t('ldgSave'));
-    const { data } = await sb.from('album_photos').insert({
+    const { data, error: saveErr } = await sb.from('album_photos').insert({
       base64,
       aufgenommen_am: takenAt.toISOString(),
       hochgeladen_von: currentUser
     }).select().single();
+    if (saveErr) {
+      console.error('album_photos insert failed for', file.name, ':', saveErr);
+      sources.failed = (sources.failed || 0) + 1;
+      details.push({ name: file.name, date: takenAt.toISOString(), source: 'failed', error: saveErr.message || JSON.stringify(saveErr) });
+      hideLoading();
+      alert('❌ Foto konnte nicht gespeichert werden: ' + file.name + '\n\n' +
+            (saveErr.message || JSON.stringify(saveErr)) +
+            '\n\nMögliche Ursache: Tabelle "album_photos" fehlt, RLS blockiert, oder Foto ist zu groß.\n\nWeitere Uploads werden abgebrochen.');
+      break;
+    }
     if (data) allAlbumPhotos.push(data);
   }
 
