@@ -182,9 +182,20 @@
   .loading-overlay { position:fixed; inset:0; background:rgba(255,255,255,0.88); display:flex; align-items:center; justify-content:center; z-index:500; flex-direction:column; gap:12px; font-weight:500; color:var(--muted); }
   .loading-spinner { width:40px; height:40px; border:4px solid var(--border); border-top-color:var(--primary); border-radius:50%; animation:spin 0.7s linear infinite; }
 
-  .photo-full-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:2000; align-items:center; justify-content:center; cursor:pointer; }
+  .photo-full-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:2000; align-items:center; justify-content:center; cursor:pointer; touch-action:pan-y; }
   .photo-full-overlay.open { display:flex; }
-  .photo-full-overlay img { max-width:95vw; max-height:95vh; object-fit:contain; border-radius:8px; }
+  .photo-full-overlay img { max-width:95vw; max-height:95vh; object-fit:contain; border-radius:8px; user-select:none; -webkit-user-drag:none; }
+  .photo-full-nav { position:absolute; top:50%; transform:translateY(-50%); background:rgba(0,0,0,0.55); color:white; border:none; width:52px; height:52px; border-radius:50%; font-size:32px; line-height:1; cursor:pointer; display:none; align-items:center; justify-content:center; z-index:2001; transition:background 0.15s, opacity 0.15s; padding:0; }
+  .photo-full-nav:hover:not(:disabled) { background:rgba(0,0,0,0.8); }
+  .photo-full-nav:disabled { opacity:0.25; cursor:default; }
+  .photo-full-nav.prev { left:18px; }
+  .photo-full-nav.next { right:18px; }
+  .photo-full-counter { position:absolute; top:18px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.55); color:white; padding:6px 16px; border-radius:20px; font-size:0.9rem; font-weight:600; z-index:2001; display:none; pointer-events:none; }
+  .photo-full-close { position:absolute; top:14px; right:18px; background:rgba(0,0,0,0.55); color:white; border:none; width:40px; height:40px; border-radius:50%; font-size:24px; line-height:1; cursor:pointer; z-index:2001; display:flex; align-items:center; justify-content:center; padding:0; }
+  .photo-full-close:hover { background:rgba(0,0,0,0.8); }
+  .photo-full-overlay.album-mode .photo-full-nav,
+  .photo-full-overlay.album-mode .photo-full-counter { display:flex; }
+  @media (max-width:520px) { .photo-full-nav { width:44px; height:44px; font-size:26px; } .photo-full-nav.prev { left:8px; } .photo-full-nav.next { right:8px; } }
 
   /* LOGIN */
   #login-screen { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:24px; background:linear-gradient(135deg,#111111 0%,#cc0000 100%); }
@@ -688,8 +699,12 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
 
 <div id="map-tooltip" class="map-tooltip"></div>
 
-<div class="photo-full-overlay" id="photo-full" onclick="this.classList.remove('open')">
-  <img id="photo-full-img" src="">
+<div class="photo-full-overlay" id="photo-full" onclick="closeFullPhoto(event)">
+  <button class="photo-full-close" onclick="event.stopPropagation();closeFullPhoto()" title="Schließen (Esc)">×</button>
+  <button class="photo-full-nav prev" id="photo-full-prev" onclick="event.stopPropagation();navigatePhoto(-1)" aria-label="Vorheriges Foto">‹</button>
+  <img id="photo-full-img" src="" onclick="event.stopPropagation()">
+  <button class="photo-full-nav next" id="photo-full-next" onclick="event.stopPropagation();navigatePhoto(1)" aria-label="Nächstes Foto">›</button>
+  <div class="photo-full-counter" id="photo-full-counter"></div>
 </div>
 <div class="loading-overlay" id="loading-overlay" style="display:none">
   <div class="loading-spinner"></div>
@@ -3379,19 +3394,93 @@ async function renderAlbum() {
   setupAlbumLazyLoader();
 }
 
+let currentPhotoIndex = -1; // index in allAlbumPhotos that's currently shown in the full-screen overlay
+
 async function showAlbumPhoto(id) {
-  const ph = allAlbumPhotos.find(p => p.id === id);
-  if (!ph) return;
+  const idx = allAlbumPhotos.findIndex(p => p.id === id);
+  if (idx < 0) return;
+  await openPhotoAtIndex(idx);
+}
+
+async function openPhotoAtIndex(idx) {
+  if (idx < 0 || idx >= allAlbumPhotos.length) return;
+  currentPhotoIndex = idx;
+  const ph = allAlbumPhotos[idx];
   const imgEl = document.getElementById('photo-full-img');
   const overlay = document.getElementById('photo-full');
-  // Open immediately with placeholder, then fill in
-  imgEl.src = albumBase64Cache.get(id) || ALBUM_PLACEHOLDER;
+  overlay.classList.add('album-mode'); // shows nav arrows + counter
+  imgEl.src = albumBase64Cache.get(ph.id) || ALBUM_PLACEHOLDER;
   overlay.classList.add('open');
-  if (!albumBase64Cache.has(id)) {
-    const b64 = await ensureAlbumPhotoLoaded(id);
-    if (b64 && overlay.classList.contains('open')) imgEl.src = b64;
+  updateFullPhotoControls();
+  if (!albumBase64Cache.has(ph.id)) {
+    const b64 = await ensureAlbumPhotoLoaded(ph.id);
+    // Only swap in if user is still viewing this photo (could have navigated away)
+    if (b64 && overlay.classList.contains('open') && currentPhotoIndex === idx) imgEl.src = b64;
   }
+  // Prefetch neighbours so left/right swipe is instant
+  prefetchPhotoAt(idx - 1);
+  prefetchPhotoAt(idx + 1);
 }
+
+function prefetchPhotoAt(idx) {
+  if (idx < 0 || idx >= allAlbumPhotos.length) return;
+  const ph = allAlbumPhotos[idx];
+  if (!albumBase64Cache.has(ph.id)) ensureAlbumPhotoLoaded(ph.id);
+}
+
+function updateFullPhotoControls() {
+  const counter = document.getElementById('photo-full-counter');
+  const prev = document.getElementById('photo-full-prev');
+  const next = document.getElementById('photo-full-next');
+  if (counter) counter.textContent = (currentPhotoIndex + 1) + ' / ' + allAlbumPhotos.length;
+  if (prev) prev.disabled = currentPhotoIndex <= 0;
+  if (next) next.disabled = currentPhotoIndex >= allAlbumPhotos.length - 1;
+}
+
+function navigatePhoto(dir) {
+  const newIdx = currentPhotoIndex + dir;
+  if (newIdx < 0 || newIdx >= allAlbumPhotos.length) return;
+  openPhotoAtIndex(newIdx);
+}
+
+function closeFullPhoto(ev) {
+  // From overlay-background click: only close if the click target IS the overlay itself
+  if (ev && ev.target && ev.currentTarget && ev.target !== ev.currentTarget) return;
+  const overlay = document.getElementById('photo-full');
+  if (overlay) { overlay.classList.remove('open'); overlay.classList.remove('album-mode'); }
+  currentPhotoIndex = -1;
+}
+
+// Keyboard: ←/→ to navigate, Esc to close (only when overlay is open)
+document.addEventListener('keydown', e => {
+  const overlay = document.getElementById('photo-full');
+  if (!overlay || !overlay.classList.contains('open')) return;
+  if (e.key === 'ArrowLeft')      { e.preventDefault(); if (currentPhotoIndex >= 0) navigatePhoto(-1); }
+  else if (e.key === 'ArrowRight'){ e.preventDefault(); if (currentPhotoIndex >= 0) navigatePhoto(1); }
+  else if (e.key === 'Escape')    { e.preventDefault(); closeFullPhoto(); }
+});
+
+// Touch: swipe left/right to navigate
+(function setupPhotoSwipe(){
+  const overlay = document.getElementById('photo-full');
+  if (!overlay) return;
+  let sx = 0, sy = 0, st = 0;
+  overlay.addEventListener('touchstart', e => {
+    if (!overlay.classList.contains('album-mode')) return;
+    const t = e.touches[0]; sx = t.clientX; sy = t.clientY; st = Date.now();
+  }, { passive: true });
+  overlay.addEventListener('touchend', e => {
+    if (!overlay.classList.contains('album-mode')) return;
+    if (currentPhotoIndex < 0) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - sx, dy = t.clientY - sy, dt = Date.now() - st;
+    if (dt > 700) return;
+    // Horizontal swipe, must be clearly horizontal (not vertical scroll attempt)
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      if (dx < 0) navigatePhoto(1); else navigatePhoto(-1);
+    }
+  }, { passive: true });
+})();
 
 // ---- single-photo delete (hover button) ----
 async function deleteAlbumPhoto(id) {
@@ -3709,7 +3798,7 @@ function albumDrop(e) {
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
-function showFullPhoto(src){document.getElementById('photo-full-img').src=src;document.getElementById('photo-full').classList.add('open');}
+function showFullPhoto(src){const ov=document.getElementById('photo-full');ov.classList.remove('album-mode');currentPhotoIndex=-1;document.getElementById('photo-full-img').src=src;ov.classList.add('open');}
 
 // ===================== UTILS =====================
 function esc(s){if(!s)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
