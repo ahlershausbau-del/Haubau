@@ -3194,8 +3194,54 @@ async function deleteBauplanEntry() {
 }
 
 // ===================== ALBUM =====================
-let allAlbumPhotos = [];
+let allAlbumPhotos = [];        // metadata only: { id, aufgenommen_am, hochgeladen_von }
 let albumLoaded = false;
+const albumBase64Cache = new Map(); // id -> base64 (loaded on demand as user scrolls)
+let albumIO = null;             // IntersectionObserver for lazy image loading
+const ALBUM_PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="%23e9ecef"/><text x="50" y="55" font-size="32" text-anchor="middle" fill="%23adb5bd">…</text></svg>'
+);
+
+/** Load (and cache) base64 for one photo on demand. */
+async function ensureAlbumPhotoLoaded(id) {
+  if (albumBase64Cache.has(id)) return albumBase64Cache.get(id);
+  const { data, error } = await sb.from('album_photos').select('base64').eq('id', id).single();
+  if (error) { console.warn('lazy-load failed for', id, error); return null; }
+  if (data && data.base64) {
+    albumBase64Cache.set(id, data.base64);
+    return data.base64;
+  }
+  return null;
+}
+
+/** Set up IntersectionObserver — loads images when they near the viewport. */
+function setupAlbumLazyLoader() {
+  if (albumIO) albumIO.disconnect();
+  if (typeof IntersectionObserver === 'undefined') {
+    // Fallback for very old browsers: load all immediately
+    document.querySelectorAll('.album-photo[data-photo-id]').forEach(async el => {
+      const b64 = await ensureAlbumPhotoLoaded(el.dataset.photoId);
+      if (b64) { const img = el.querySelector('img'); if (img) img.src = b64; }
+    });
+    return;
+  }
+  albumIO = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const el = entry.target;
+      const id = el.dataset.photoId;
+      if (!id || el.dataset.loaded === '1') { albumIO.unobserve(el); continue; }
+      el.dataset.loaded = '1';
+      albumIO.unobserve(el);
+      ensureAlbumPhotoLoaded(id).then(b64 => {
+        if (!b64) return;
+        const img = el.querySelector('img');
+        if (img) img.src = b64;
+      });
+    }
+  }, { rootMargin: '400px 0px', threshold: 0.01 }); // start ~2 rows ahead
+  document.querySelectorAll('.album-photo[data-photo-id]').forEach(el => albumIO.observe(el));
+}
 
 /** ISO calendar week + year for a given Date */
 function getCalendarWeek(date) {
@@ -3212,68 +3258,43 @@ function fmtMonthHeader(year, month0) {
 }
 
 async function loadAlbumPhotos() {
-  // Batched loading: SELECT * with base64 is huge and easily hits the
-  // Supabase free-tier statement_timeout (~3s). We page in small chunks,
-  // re-render after each batch, so the user sees photos appear progressively.
+  // Metadata-only query — tiny rows, schnell auch bei tausenden Fotos.
+  // Die Base64-Bilder werden per IntersectionObserver einzeln nachgeladen
+  // sobald sie ins Sichtfeld scrollen (ensureAlbumPhotoLoaded).
   allAlbumPhotos = [];
-  albumLoaded = true; // set early so renderAlbum doesn't recursively call us
-  let pageSize = 20;
-  let offset = 0;
-  let firstBatch = true;
-  while (true) {
-    showLoading(`Lade Fotos... (${allAlbumPhotos.length} geladen)`);
-    const { data, error } = await sb.from('album_photos')
-      .select('*')
-      .order('aufgenommen_am', { ascending: false })
-      .range(offset, offset + pageSize - 1);
-    if (error) {
-      console.error('loadAlbumPhotos batch failed (offset=' + offset + ', size=' + pageSize + '):', error);
-      const msgTxt = error.message || JSON.stringify(error);
-      const isTimeout = /statement timeout|canceling statement/i.test(msgTxt);
-      const isMissing = /album_photos/i.test(msgTxt) && /not exist|schema cache|does not exist/i.test(msgTxt);
-      // On timeout: try smaller batch size before giving up
-      if (isTimeout && pageSize > 3) {
-        pageSize = Math.max(3, Math.floor(pageSize / 2));
-        console.warn('Timeout — retrying with smaller batch size: ' + pageSize);
-        continue;
-      }
-      hideLoading();
-      let msg = '⚠️ Fotoalbum konnte nicht ' + (firstBatch ? 'geladen' : 'vollständig geladen') + ' werden:\n\n' + msgTxt;
-      if (!firstBatch) msg += '\n\n(' + allAlbumPhotos.length + ' Fotos wurden geladen bevor der Fehler auftrat.)';
-      if (isMissing) {
-        msg += '\n\n➡️ Die Tabelle "album_photos" fehlt in deiner Supabase-Datenbank.\n\n' +
-               'Lösung: Im Supabase Dashboard → SQL Editor folgendes ausführen:\n\n' +
-               'create table if not exists album_photos (\n' +
-               '  id uuid default gen_random_uuid() primary key,\n' +
-               '  base64 text not null,\n' +
-               '  aufgenommen_am timestamptz not null,\n' +
-               '  hochgeladen_von text,\n' +
-               '  erstellt timestamptz default now()\n' +
-               ');\n' +
-               'grant select, insert, update, delete on public.album_photos to anon, authenticated, service_role;\n' +
-               'alter table public.album_photos enable row level security;\n' +
-               'create policy "anon_full" on public.album_photos for all to anon using (true) with check (true);';
-      } else if (isTimeout) {
-        msg += '\n\n➡️ Supabase-Statement-Timeout. Lösung im SQL Editor:\n\n' +
-               'alter role anon set statement_timeout = \'30s\';\n' +
-               'alter role authenticated set statement_timeout = \'30s\';\n\n' +
-               'Danach Seite neu laden.';
-      }
-      alert(msg);
-      return;
+  albumLoaded = true;
+  const { data, error } = await sb.from('album_photos')
+    .select('id, aufgenommen_am, hochgeladen_von')
+    .order('aufgenommen_am', { ascending: false });
+  if (error) {
+    console.error('loadAlbumPhotos failed:', error);
+    const msgTxt = error.message || JSON.stringify(error);
+    const isTimeout = /statement timeout|canceling statement/i.test(msgTxt);
+    const isMissing = /album_photos/i.test(msgTxt) && /not exist|schema cache|does not exist/i.test(msgTxt);
+    let msg = '⚠️ Fotoalbum konnte nicht geladen werden:\n\n' + msgTxt;
+    if (isMissing) {
+      msg += '\n\n➡️ Die Tabelle "album_photos" fehlt in deiner Supabase-Datenbank.\n\n' +
+             'Lösung: Im Supabase Dashboard → SQL Editor folgendes ausführen:\n\n' +
+             'create table if not exists album_photos (\n' +
+             '  id uuid default gen_random_uuid() primary key,\n' +
+             '  base64 text not null,\n' +
+             '  aufgenommen_am timestamptz not null,\n' +
+             '  hochgeladen_von text,\n' +
+             '  erstellt timestamptz default now()\n' +
+             ');\n' +
+             'grant select, insert, update, delete on public.album_photos to anon, authenticated, service_role;\n' +
+             'alter table public.album_photos enable row level security;\n' +
+             'create policy "anon_full" on public.album_photos for all to anon using (true) with check (true);';
+    } else if (isTimeout) {
+      msg += '\n\n➡️ Supabase-Statement-Timeout. Lösung im SQL Editor:\n\n' +
+             'alter role anon set statement_timeout = \'30s\';\n' +
+             'alter role authenticated set statement_timeout = \'30s\';\n' +
+             'notify pgrst, \'reload config\';';
     }
-    if (!data || !data.length) break;
-    allAlbumPhotos.push(...data);
-    firstBatch = false;
-    // Progressive UI update — show what we have so far while remaining batches load
-    if (document.getElementById('view-album')?.classList.contains('active')) {
-      try { renderAlbum(); } catch(e) { console.warn('progressive render failed:', e); }
-    }
-    if (data.length < pageSize) break;
-    offset += pageSize;
-    // Yield to UI thread so it can paint
-    await new Promise(r => setTimeout(r, 0));
+    alert(msg);
+    return;
   }
+  allAlbumPhotos = data || [];
 }
 
 async function renderAlbum() {
@@ -3335,8 +3356,13 @@ async function renderAlbum() {
         const dd = new Date(ph.aufgenommen_am);
         const dateStr = dd.toLocaleDateString(loc, { day:'2-digit', month:'2-digit', year:'numeric' });
         const timeStr = dd.toLocaleTimeString(loc, { hour:'2-digit', minute:'2-digit' });
-        html += `<div class="album-photo${albumSelected.has(ph.id)?' selected':''}" id="aph-${ph.id}" onclick="albumPhotoClick('${ph.id}',this)">
-          <img src="${ph.base64}" loading="lazy" alt="">
+        // If we already have base64 (uploaded this session or previously cached), use it directly.
+        // Otherwise: placeholder. The IntersectionObserver swaps in the real image when it scrolls into view.
+        const cached = albumBase64Cache.get(ph.id);
+        const initialSrc = cached || ALBUM_PLACEHOLDER;
+        const loadedFlag = cached ? ' data-loaded="1"' : '';
+        html += `<div class="album-photo${albumSelected.has(ph.id)?' selected':''}" id="aph-${ph.id}" data-photo-id="${ph.id}"${loadedFlag} onclick="albumPhotoClick('${ph.id}',this)">
+          <img src="${initialSrc}" loading="lazy" alt="">
           <span class="album-select-check">${albumSelected.has(ph.id)?'✓':''}</span>
           <button class="album-photo-del" onclick="event.stopPropagation();deleteAlbumPhoto('${ph.id}')" title="${t('btnDelete')}">🗑</button>
           <div class="album-photo-date">${dateStr}&nbsp;${timeStr}</div>
@@ -3349,11 +3375,22 @@ async function renderAlbum() {
   container.innerHTML = html;
   if (albumDeleteMode) container.classList.add('select-mode');
   else container.classList.remove('select-mode');
+  // Start lazy-loading images that come into view
+  setupAlbumLazyLoader();
 }
 
-function showAlbumPhoto(id) {
+async function showAlbumPhoto(id) {
   const ph = allAlbumPhotos.find(p => p.id === id);
-  if (ph) { document.getElementById('photo-full-img').src = ph.base64; document.getElementById('photo-full').classList.add('open'); }
+  if (!ph) return;
+  const imgEl = document.getElementById('photo-full-img');
+  const overlay = document.getElementById('photo-full');
+  // Open immediately with placeholder, then fill in
+  imgEl.src = albumBase64Cache.get(id) || ALBUM_PLACEHOLDER;
+  overlay.classList.add('open');
+  if (!albumBase64Cache.has(id)) {
+    const b64 = await ensureAlbumPhotoLoaded(id);
+    if (b64 && overlay.classList.contains('open')) imgEl.src = b64;
+  }
 }
 
 // ---- single-photo delete (hover button) ----
@@ -3363,6 +3400,7 @@ async function deleteAlbumPhoto(id) {
   await sb.from('album_photos').delete().eq('id', id);
   allAlbumPhotos = allAlbumPhotos.filter(p => p.id !== id);
   albumSelected.delete(id);
+  albumBase64Cache.delete(id);
   hideLoading();
   renderAlbum();
 }
@@ -3467,6 +3505,7 @@ async function deleteSelectedAlbum() {
   // Delete all at once via "in" filter
   await sb.from('album_photos').delete().in('id', ids);
   allAlbumPhotos = allAlbumPhotos.filter(p => !albumSelected.has(p.id));
+  ids.forEach(id => albumBase64Cache.delete(id));
   albumSelected.clear();
   albumDeleteMode = false;
   hideLoading();
@@ -3569,7 +3608,12 @@ async function handleAlbumUpload(event) {
             '\n\nMögliche Ursache: Tabelle "album_photos" fehlt, RLS blockiert, oder Foto ist zu groß.\n\nWeitere Uploads werden abgebrochen.');
       break;
     }
-    if (data) allAlbumPhotos.push(data);
+    if (data) {
+      // Cache base64 in memory so the tile appears immediately (no re-fetch needed)
+      if (data.base64) albumBase64Cache.set(data.id, data.base64);
+      // Store only metadata in the list — keeps allAlbumPhotos small
+      allAlbumPhotos.push({ id: data.id, aufgenommen_am: data.aufgenommen_am, hochgeladen_von: data.hochgeladen_von });
+    }
   }
 
   // Sort newest first
