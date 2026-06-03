@@ -120,6 +120,25 @@
   .photo-thumb { position:relative; aspect-ratio:1; border-radius:8px; overflow:hidden; border:1px solid var(--border); cursor:pointer; }
   .photo-thumb img { width:100%; height:100%; object-fit:cover; }
   .photo-thumb .del-photo { position:absolute; top:4px; right:4px; background:rgba(220,38,38,0.85); color:white; border:none; border-radius:50%; width:20px; height:20px; cursor:pointer; font-size:12px; display:flex; align-items:center; justify-content:center; }
+  .photo-thumb .edit-photo { position:absolute; top:4px; left:4px; background:rgba(34,197,94,0.9); color:white; border:none; border-radius:50%; width:22px; height:22px; cursor:pointer; font-size:12px; display:flex; align-items:center; justify-content:center; padding:0; }
+  .photo-thumb .edit-photo:hover { background:rgba(22,163,74,1); }
+
+  /* PHOTO EDITOR */
+  .photo-editor-modal { max-width:1000px !important; width:96vw !important; padding:0 !important; overflow:hidden; max-height:96vh; display:flex; flex-direction:column; }
+  .pe-header { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; background:#111; color:white; gap:10px; }
+  .pe-header h3 { color:white; margin:0; font-size:1rem; font-weight:600; }
+  .pe-canvas-wrap { background:#222; padding:10px; display:flex; align-items:center; justify-content:center; overflow:auto; flex:1; min-height:280px; touch-action:none; }
+  #pe-canvas { max-width:100%; max-height:65vh; background:white; box-shadow:0 4px 20px rgba(0,0,0,0.4); cursor:crosshair; touch-action:none; display:block; }
+  .pe-toolbar { background:#1a1a1a; padding:12px 14px; display:flex; flex-wrap:wrap; gap:14px; align-items:center; justify-content:space-between; border-top:1px solid #333; }
+  .pe-tools, .pe-colors { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .pe-tool-btn { background:#2a2a2a; color:white; border:2px solid #444; border-radius:8px; padding:7px 11px; font-size:0.84rem; cursor:pointer; min-width:54px; transition:all 0.15s; }
+  .pe-tool-btn:hover { background:#383838; }
+  .pe-tool-btn.active { background:#cc0000; border-color:#ff5555; }
+  .pe-color-btn { width:30px; height:30px; border-radius:50%; border:3px solid #444; cursor:pointer; padding:0; transition:transform 0.1s; }
+  .pe-color-btn:hover { transform:scale(1.1); }
+  .pe-color-btn.active { border-color:white; transform:scale(1.15); }
+  .pe-toolbar-divider { width:1px; align-self:stretch; background:#333; }
+  @media (max-width:600px) { .pe-tool-btn { font-size:0.78rem; padding:6px 9px; min-width:48px; } .pe-color-btn { width:26px; height:26px; } .pe-toolbar { padding:10px; gap:10px; } }
 
   /* MODALS */
   .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center; padding:20px; }
@@ -732,6 +751,37 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
         <li>QR-Code öffnet beim Scannen diesen Punkt in der App.</li>
       </ul>
     </details>
+  </div>
+</div>
+
+<!-- ==================== PHOTO ANNOTATION EDITOR ==================== -->
+<div class="modal-overlay" id="modal-photo-editor">
+  <div class="modal photo-editor-modal">
+    <div class="pe-header">
+      <button class="modal-close" onclick="closePhotoEditor()" style="color:white;background:rgba(255,255,255,0.15)">×</button>
+      <h3>✏️ Foto bearbeiten</h3>
+      <button class="btn btn-success" onclick="savePhotoEditor()" style="padding:7px 14px;font-size:0.88rem">💾 Speichern</button>
+    </div>
+    <div class="pe-canvas-wrap" id="pe-canvas-wrap">
+      <canvas id="pe-canvas"></canvas>
+    </div>
+    <div class="pe-toolbar">
+      <div class="pe-tools">
+        <button class="pe-tool-btn" data-tool="circle" onclick="setEditorTool('circle')">🔴 Kreis</button>
+        <button class="pe-tool-btn" data-tool="arrow" onclick="setEditorTool('arrow')">➡️ Pfeil</button>
+        <button class="pe-tool-btn" data-tool="text" onclick="setEditorTool('text')">📝 Text</button>
+        <button class="pe-tool-btn" data-tool="free" onclick="setEditorTool('free')">🖍️ Frei</button>
+      </div>
+      <div class="pe-toolbar-divider"></div>
+      <div class="pe-colors">
+        <button class="pe-color-btn" data-color="#ff0000" style="background:#ff0000" onclick="setEditorColor('#ff0000')" title="Rot"></button>
+        <button class="pe-color-btn" data-color="#ffff00" style="background:#ffff00" onclick="setEditorColor('#ffff00')" title="Gelb"></button>
+        <button class="pe-color-btn" data-color="#ffffff" style="background:#ffffff" onclick="setEditorColor('#ffffff')" title="Weiß"></button>
+        <button class="pe-color-btn" data-color="#000000" style="background:#000000" onclick="setEditorColor('#000000')" title="Schwarz"></button>
+      </div>
+      <div class="pe-toolbar-divider"></div>
+      <button class="pe-tool-btn" onclick="undoLastAnnotation()" title="Letztes rückgängig">↶ Rückgängig</button>
+    </div>
   </div>
 </div>
 
@@ -1739,8 +1789,18 @@ function renderFotoPreview() {
   document.getElementById('foto-preview').innerHTML=currentPhotos.map((p,i)=>`
     <div class="photo-thumb">
       <img src="${p.base64}" onclick="showFullPhoto('${p.base64}')">
+      <button class="edit-photo" title="Bearbeiten / markieren" onclick="event.stopPropagation();editFotoAt(${i})">✏️</button>
       <button class="del-photo" onclick="currentPhotos.splice(${i},1);renderFotoPreview()">×</button>
     </div>`).join('');
+}
+
+function editFotoAt(i) {
+  if (!currentPhotos[i]) return;
+  openPhotoEditor(currentPhotos[i].base64, (newBase64) => {
+    currentPhotos[i].base64 = newBase64;
+    currentPhotos[i].isNew = true; // ensure it gets re-uploaded on save
+    renderFotoPreview();
+  });
 }
 
 async function savePunkt() {
@@ -4017,6 +4077,247 @@ function albumDrop(e) {
   if (files.length) handleAlbumUpload({ files });
 }
 
+// ===================== PHOTO ANNOTATION EDITOR =====================
+// Lets the user circle, arrow, label or freehand-draw on a photo.
+// Saving bakes the annotations into the JPEG (lossy but fits the existing storage).
+const peState = {
+  canvas: null,
+  ctx: null,
+  baseImage: null,        // HTMLImageElement of the photo (full resolution)
+  annotations: [],        // Completed annotation objects
+  preview: null,          // Current in-progress shape (for live drawing)
+  tool: 'circle',
+  color: '#ff0000',
+  isDrawing: false,
+  startX: 0, startY: 0,
+  onSave: null,           // callback(newBase64) when user hits Save
+  imgW: 0, imgH: 0
+};
+
+function setEditorTool(tool) {
+  peState.tool = tool;
+  document.querySelectorAll('.pe-tool-btn[data-tool]').forEach(b =>
+    b.classList.toggle('active', b.dataset.tool === tool));
+}
+function setEditorColor(color) {
+  peState.color = color;
+  document.querySelectorAll('.pe-color-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.color === color));
+}
+
+/** Open the editor for a base64 image. onSave(newBase64) fires when the user saves. */
+async function openPhotoEditor(base64, onSave) {
+  peState.canvas = document.getElementById('pe-canvas');
+  peState.ctx = peState.canvas.getContext('2d');
+  peState.annotations = [];
+  peState.preview = null;
+  peState.onSave = onSave;
+  // Load image at full resolution
+  const img = new Image();
+  await new Promise((res, rej) => {
+    img.onload = res; img.onerror = rej;
+    img.src = base64;
+  });
+  peState.baseImage = img;
+  peState.imgW = img.naturalWidth;
+  peState.imgH = img.naturalHeight;
+  peState.canvas.width = peState.imgW;
+  peState.canvas.height = peState.imgH;
+  // Set initial tool & color highlighted
+  setEditorTool(peState.tool);
+  setEditorColor(peState.color);
+  redrawEditor();
+  openModal('modal-photo-editor');
+}
+
+function closePhotoEditor() {
+  // Tear down any pending drawing state
+  peState.isDrawing = false;
+  peState.preview = null;
+  peState.annotations = [];
+  peState.baseImage = null;
+  peState.onSave = null;
+  closeModal('modal-photo-editor');
+}
+
+function undoLastAnnotation() {
+  if (peState.annotations.length === 0) return;
+  peState.annotations.pop();
+  redrawEditor();
+}
+
+async function savePhotoEditor() {
+  if (!peState.canvas || !peState.onSave) { closePhotoEditor(); return; }
+  // Composite to JPEG (same quality as compressToBase64)
+  const dataUrl = peState.canvas.toDataURL('image/jpeg', 0.82);
+  const cb = peState.onSave;
+  closePhotoEditor();
+  await cb(dataUrl);
+}
+
+/** Compute a sensible stroke width relative to image size. */
+function peLineWidth() {
+  return Math.max(4, Math.round(Math.min(peState.imgW, peState.imgH) / 180));
+}
+function peFontSize() {
+  return Math.max(20, Math.round(Math.min(peState.imgW, peState.imgH) / 28));
+}
+
+/** Re-render: photo + all annotations + current preview. */
+function redrawEditor() {
+  const ctx = peState.ctx;
+  if (!ctx || !peState.baseImage) return;
+  ctx.clearRect(0, 0, peState.canvas.width, peState.canvas.height);
+  ctx.drawImage(peState.baseImage, 0, 0);
+  for (const ann of peState.annotations) drawAnnotation(ctx, ann);
+  if (peState.preview) drawAnnotation(ctx, peState.preview);
+}
+
+function drawAnnotation(ctx, ann) {
+  ctx.save();
+  ctx.strokeStyle = ann.color;
+  ctx.fillStyle = ann.color;
+  ctx.lineWidth = ann.lineWidth || peLineWidth();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (ann.type === 'circle') {
+    ctx.beginPath();
+    ctx.arc(ann.cx, ann.cy, Math.max(2, ann.r), 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (ann.type === 'arrow') {
+    drawArrowShape(ctx, ann.x1, ann.y1, ann.x2, ann.y2, ann.color, ann.lineWidth || peLineWidth());
+  } else if (ann.type === 'text') {
+    ctx.font = `bold ${ann.fontSize}px sans-serif`;
+    ctx.textBaseline = 'top';
+    // White outline for readability on any background
+    ctx.strokeStyle = ann.color === '#ffffff' ? '#000' : '#fff';
+    ctx.lineWidth = Math.max(2, ann.fontSize / 12);
+    ctx.lineJoin = 'round';
+    ctx.miterLimit = 2;
+    ctx.strokeText(ann.text, ann.x, ann.y);
+    ctx.fillStyle = ann.color;
+    ctx.fillText(ann.text, ann.x, ann.y);
+  } else if (ann.type === 'free' && ann.points && ann.points.length > 1) {
+    ctx.beginPath();
+    ctx.moveTo(ann.points[0].x, ann.points[0].y);
+    for (let i = 1; i < ann.points.length; i++) ctx.lineTo(ann.points[i].x, ann.points[i].y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawArrowShape(ctx, x1, y1, x2, y2, color, width) {
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const headLen = width * 5;
+  // Shaft slightly short so head sits cleanly on top
+  const xs = x2 - Math.cos(angle) * headLen * 0.5;
+  const ys = y2 - Math.sin(angle) * headLen * 0.5;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(xs, ys);
+  ctx.stroke();
+  // Arrowhead (filled triangle)
+  ctx.beginPath();
+  ctx.moveTo(x2, y2);
+  ctx.lineTo(x2 - headLen * Math.cos(angle - Math.PI / 6), y2 - headLen * Math.sin(angle - Math.PI / 6));
+  ctx.lineTo(x2 - headLen * Math.cos(angle + Math.PI / 6), y2 - headLen * Math.sin(angle + Math.PI / 6));
+  ctx.closePath();
+  ctx.fill();
+}
+
+/** Convert pointer event to canvas pixel coordinates. */
+function peCoordsFromEvent(ev) {
+  const rect = peState.canvas.getBoundingClientRect();
+  let clientX, clientY;
+  if (ev.touches && ev.touches[0]) {
+    clientX = ev.touches[0].clientX; clientY = ev.touches[0].clientY;
+  } else if (ev.changedTouches && ev.changedTouches[0]) {
+    clientX = ev.changedTouches[0].clientX; clientY = ev.changedTouches[0].clientY;
+  } else {
+    clientX = ev.clientX; clientY = ev.clientY;
+  }
+  const scaleX = peState.canvas.width / rect.width;
+  const scaleY = peState.canvas.height / rect.height;
+  return {
+    x: (clientX - rect.left) * scaleX,
+    y: (clientY - rect.top) * scaleY
+  };
+}
+
+function peStart(ev) {
+  if (!peState.canvas) return;
+  ev.preventDefault();
+  const { x, y } = peCoordsFromEvent(ev);
+  // Text tool: prompt immediately, no drag
+  if (peState.tool === 'text') {
+    const text = prompt('Text:');
+    if (text && text.trim()) {
+      peState.annotations.push({
+        type: 'text', x, y, text: text.trim(),
+        color: peState.color, fontSize: peFontSize()
+      });
+      redrawEditor();
+    }
+    return;
+  }
+  peState.isDrawing = true;
+  peState.startX = x; peState.startY = y;
+  if (peState.tool === 'free') {
+    peState.preview = { type: 'free', points: [{x, y}], color: peState.color, lineWidth: peLineWidth() };
+  }
+}
+
+function peMove(ev) {
+  if (!peState.isDrawing) return;
+  ev.preventDefault();
+  const { x, y } = peCoordsFromEvent(ev);
+  if (peState.tool === 'circle') {
+    const r = Math.hypot(x - peState.startX, y - peState.startY);
+    peState.preview = { type: 'circle', cx: peState.startX, cy: peState.startY, r, color: peState.color, lineWidth: peLineWidth() };
+  } else if (peState.tool === 'arrow') {
+    peState.preview = { type: 'arrow', x1: peState.startX, y1: peState.startY, x2: x, y2: y, color: peState.color, lineWidth: peLineWidth() };
+  } else if (peState.tool === 'free') {
+    if (peState.preview && peState.preview.points) peState.preview.points.push({x, y});
+  }
+  redrawEditor();
+}
+
+function peEnd(ev) {
+  if (!peState.isDrawing) return;
+  ev.preventDefault();
+  peState.isDrawing = false;
+  if (peState.preview) {
+    // Reject tiny shapes (probably accidental click)
+    let keep = true;
+    if (peState.preview.type === 'circle' && peState.preview.r < 4) keep = false;
+    if (peState.preview.type === 'arrow' && Math.hypot(peState.preview.x2-peState.preview.x1, peState.preview.y2-peState.preview.y1) < 6) keep = false;
+    if (peState.preview.type === 'free' && peState.preview.points && peState.preview.points.length < 2) keep = false;
+    if (keep) peState.annotations.push(peState.preview);
+    peState.preview = null;
+    redrawEditor();
+  }
+}
+
+// Wire up event handlers ONCE — at the very bottom of script we'll attach them
+function attachPhotoEditorHandlers() {
+  const c = document.getElementById('pe-canvas');
+  if (!c || c.dataset.peWired) return;
+  c.dataset.peWired = '1';
+  c.addEventListener('mousedown',  peStart, { passive: false });
+  c.addEventListener('mousemove',  peMove,  { passive: false });
+  c.addEventListener('mouseup',    peEnd,   { passive: false });
+  c.addEventListener('mouseleave', peEnd,   { passive: false });
+  c.addEventListener('touchstart', peStart, { passive: false });
+  c.addEventListener('touchmove',  peMove,  { passive: false });
+  c.addEventListener('touchend',   peEnd,   { passive: false });
+  c.addEventListener('touchcancel',peEnd,   { passive: false });
+}
+
 // ===================== LABEL PRINTING (NIIMBOT B1) =====================
 // Label format: 50 x 30 mm @ 203 DPI = 400 x 240 dots
 const LABEL_W_MM   = 50;
@@ -4509,6 +4810,9 @@ function goToLoginFromPublic() {
   document.getElementById('public-view').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
 }
+
+// Wire up the photo-editor canvas event handlers now that the DOM is parsed
+attachPhotoEditorHandlers();
 
 // ===================== BOOT =====================
 applyLang(); // Apply language immediately (before login/public view)
