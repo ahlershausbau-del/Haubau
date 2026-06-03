@@ -91,6 +91,7 @@
   .badge { display:inline-flex; align-items:center; padding:3px 10px; border-radius:999px; font-size:0.75rem; font-weight:600; }
   .badge-critical { background:#fee2e2; color:var(--danger); border:1px solid var(--danger); }
   .badge-noncritical { background:#f0f0f0; color:#111111; border:1px solid #333333; }
+  .badge-todo { background:#dbeafe; color:#1e40af; border:1px solid #3b82f6; }
   .badge-open { background:#fff0f0; color:#aa0000; border:1px solid #cc0000; }
   .badge-done { background:#dcfce7; color:#14532d; border:1px solid #16a34a; }
 
@@ -99,6 +100,7 @@
   .punkt-card:hover { box-shadow:0 4px 12px rgba(0,0,0,0.1); transform:translateY(-1px); }
   .punkt-card.critical { border-left:4px solid var(--danger); }
   .punkt-card.noncritical { border-left:4px solid #111111; }
+  .punkt-card.todo { border-left:4px solid #3b82f6; }
   .punkt-number { font-size:1.1rem; font-weight:700; color:var(--muted); min-width:46px; text-align:center; background:var(--bg); border-radius:8px; padding:8px 4px; }
   .punkt-info { flex:1; min-width:0; }
   .punkt-title { font-weight:600; font-size:1rem; margin-bottom:4px; }
@@ -155,6 +157,8 @@
   .map-dot:hover { transform:translate(-50%,-50%) scale(2); box-shadow:0 4px 14px rgba(220,38,38,0.6); }
   .map-dot.noncritical-open { background:#111111; box-shadow:0 2px 8px rgba(0,0,0,0.4); }
   .map-dot.noncritical-open:hover { box-shadow:0 4px 14px rgba(0,0,0,0.5); }
+  .map-dot.todo-open { background:#3b82f6; box-shadow:0 2px 8px rgba(59,130,246,0.5); }
+  .map-dot.todo-open:hover { box-shadow:0 4px 14px rgba(59,130,246,0.65); }
   .map-dot.done { background:#16a34a; box-shadow:0 2px 8px rgba(22,163,74,0.4); }
   .map-dot.done:hover { box-shadow:0 4px 14px rgba(22,163,74,0.5); }
   @keyframes pulse { 0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,0.5)} 50%{box-shadow:0 0 0 6px rgba(220,38,38,0)} }
@@ -337,6 +341,7 @@ create table if not exists punkte (
 -- Migration (falls Tabelle bereits existiert):
 alter table public.punkte add column if not exists aufgenommen_von text;
 alter table public.punkte add column if not exists geschlossen_at timestamptz;
+alter table public.punkte add column if not exists zustaendig text;
 
 create table if not exists photos (
   id uuid default gen_random_uuid() primary key,
@@ -473,6 +478,7 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
         <option value="">Alle Kategorien</option>
         <option value="critical">🔴 Critical</option>
         <option value="noncritical">⚫ Non-Critical</option>
+        <option value="todo">📋 To-Do</option>
       </select>
       <select id="filter-status" onchange="renderListe()">
         <option value="">Alle Status</option>
@@ -512,8 +518,19 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
     <div class="grid-2">
       <div class="form-group"><label>Titel *</label><input id="f-titel" type="text" placeholder="z.B. Riss in Außenwand"></div>
       <div class="form-group"><label>Kategorie *</label>
-        <select id="f-kategorie"><option value="critical">🔴 Critical</option><option value="noncritical">⚫ Non-Critical</option></select>
+        <select id="f-kategorie" onchange="updateTodoVisibility()"><option value="critical">🔴 Critical</option><option value="noncritical">⚫ Non-Critical</option><option value="todo">📋 To-Do</option></select>
       </div>
+    </div>
+    <div class="form-group" id="f-todo-group" style="display:none"><label>Zuständig *</label>
+      <select id="f-zustaendig">
+        <option value="">— Person wählen —</option>
+        <option value="Sandra">Sandra</option>
+        <option value="Steffen">Steffen</option>
+        <option value="Monika">Monika</option>
+        <option value="Detlef">Detlef</option>
+        <option value="Rainer">Rainer</option>
+        <option value="Heike">Heike</option>
+      </select>
     </div>
     <div class="form-group"><label>Beschreibung</label><textarea id="f-beschreibung" placeholder="Detaillierte Beschreibung..."></textarea></div>
     <div class="grid-2">
@@ -752,7 +769,7 @@ const LANG = {
     allFloors:'Alle Etagen', allCats:'Alle Kategorien',
     allStatus:'Alle Status', allResp:'Alle Verantwortlichen',
     statusOpen:'Offen', statusDone:'Erledigt',
-    catCritical:'🔴 Critical', catNonCritical:'⚫ Non-Critical',
+    catCritical:'🔴 Critical', catNonCritical:'⚫ Non-Critical', catTodo:'📋 To-Do',
     noItems:'Keine Punkte gefunden',
     enteredOn:'Eingetragen:', recordedByIcon:'✍️',
     /* Export controls */
@@ -850,7 +867,7 @@ const LANG = {
     pdfFilterAll:'Alle Punkte', pdfFilterOpen:'Nur Offene',
     pdfPoints:(n)=>`${n} Punkte`,
     pdfFloor:'Etage: ', pdfResp:'Zuständig: ', pdfRecBy:'Aufgen. von: ', pdfDue:'Fällig: ',
-    pdfCritical:'● Critical', pdfNonCritical:'● Non-Critical',
+    pdfCritical:'● Critical', pdfNonCritical:'● Non-Critical', pdfTodo:'● To-Do',
     pdfDone:'✓ Erledigt', pdfOverdueStatus:'⚠ Überfällig', pdfStatusOpen:'Offen',
     pdfNoPos:'Keine Position', pdfNoFloor:'Kein Grundriss',
     pdfPhotosLabel:'Fotos:', pdfPage:(p,t)=>`Seite ${p} von ${t}`,
@@ -861,7 +878,7 @@ const LANG = {
     xlPhoto:(n)=>`Foto ${n}`, xlFirma:'Firma',
     xlRecByFull:'Aufgenommen von', xlDueFull:'Fälligkeitsdatum',
     xlCreated:'Eingetragen am', xlPhotos:'Fotos',
-    xlCritical:'Critical', xlNonCritical:'Non-Critical',
+    xlCritical:'Critical', xlNonCritical:'Non-Critical', xlTodo:'To-Do',
     xlOpen:'Offen', xlOverdue:'Offen (überfällig)', xlDone:'Erledigt',
     xlSheetAll:'Alle Punkte', xlSheetOpen:'Offene Punkte',
     /* Filenames */
@@ -925,7 +942,7 @@ const LANG = {
     allFloors:'All Floors', allCats:'All Categories',
     allStatus:'All Status', allResp:'All Responsible',
     statusOpen:'Open', statusDone:'Done',
-    catCritical:'🔴 Critical', catNonCritical:'⚫ Non-Critical',
+    catCritical:'🔴 Critical', catNonCritical:'⚫ Non-Critical', catTodo:'📋 To-Do',
     noItems:'No items found',
     enteredOn:'Created:', recordedByIcon:'✍️',
     /* Export controls */
@@ -1023,7 +1040,7 @@ const LANG = {
     pdfFilterAll:'All Items', pdfFilterOpen:'Open Only',
     pdfPoints:(n)=>`${n} Items`,
     pdfFloor:'Floor: ', pdfResp:'Responsible: ', pdfRecBy:'Rec. by: ', pdfDue:'Due: ',
-    pdfCritical:'● Critical', pdfNonCritical:'● Non-Critical',
+    pdfCritical:'● Critical', pdfNonCritical:'● Non-Critical', pdfTodo:'● To-Do',
     pdfDone:'✓ Done', pdfOverdueStatus:'⚠ Overdue', pdfStatusOpen:'Open',
     pdfNoPos:'No position', pdfNoFloor:'No floor plan',
     pdfPhotosLabel:'Photos:', pdfPage:(p,t)=>`Page ${p} of ${t}`,
@@ -1034,7 +1051,7 @@ const LANG = {
     xlPhoto:(n)=>`Photo ${n}`, xlFirma:'Company',
     xlRecByFull:'Recorded by', xlDueFull:'Due date',
     xlCreated:'Created at', xlPhotos:'Photos',
-    xlCritical:'Critical', xlNonCritical:'Non-Critical',
+    xlCritical:'Critical', xlNonCritical:'Non-Critical', xlTodo:'To-Do',
     xlOpen:'Open', xlOverdue:'Open (overdue)', xlDone:'Done',
     xlSheetAll:'All Items', xlSheetOpen:'Open Items',
     /* Filenames */
@@ -1444,14 +1461,15 @@ function renderListe() {
     const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
     const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
     return `
-      <div class="punkt-card ${p.kategorie}" onclick="openDetail('${p.id}')">
+      <div class="punkt-card ${catCssClass(p.kategorie)}" onclick="openDetail('${p.id}')">
         <div class="punkt-number">#${p.nummer}</div>
         <div class="punkt-info">
           <div class="punkt-title">${esc(p.titel)}</div>
           ${p.beschreibung?`<div style="font-size:0.85rem;color:var(--muted);margin-top:2px">${esc(p.beschreibung.substring(0,120))}${p.beschreibung.length>120?'...':''}</div>`:''}
           <div class="punkt-meta">
-            <span class="badge badge-${p.kategorie}">${p.kategorie==='critical'?t('catCritical'):t('catNonCritical')}</span>
+            <span class="badge badge-${catCssClass(p.kategorie)}">${catLabel(p.kategorie)}</span>
             <span class="badge badge-${p.status}">${p.status==='open'?t('statusOpen'):t('statusDone')}</span>
+            ${p.kategorie==='todo'&&p.zustaendig?`<span class="tag" style="background:#dbeafe;color:#1e40af;border-color:#3b82f6">👤 ${esc(p.zustaendig)}</span>`:''}
             ${etage?`<span class="tag">🏢 ${esc(etage.name)}</span>`:''}
             ${contact?`<span class="tag">👷 ${esc(contact.name)}</span>`:''}
             ${p.due_date?`<span class="tag" style="${overdue?'color:var(--danger);font-weight:600':''}">📅 ${fmtDate(p.due_date)}${overdue?' ⚠️':''}</span>`:''}
@@ -1469,7 +1487,7 @@ function populateFilters() {
   eEl.innerHTML=`<option value="">${t('allFloors')}</option>`+allEtagen.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join(''); eEl.value=eV;
   // Filter kategorie options
   const kEl=document.getElementById('filter-kategorie');
-  if(kEl){const kV=kEl.value;kEl.innerHTML=`<option value="">${t('allCats')}</option><option value="critical">${t('catCritical')}</option><option value="noncritical">${t('catNonCritical')}</option>`;kEl.value=kV;}
+  if(kEl){const kV=kEl.value;kEl.innerHTML=`<option value="">${t('allCats')}</option><option value="critical">${t('catCritical')}</option><option value="noncritical">${t('catNonCritical')}</option><option value="todo">${t('catTodo')}</option>`;kEl.value=kV;}
   // Filter status options
   const sEl=document.getElementById('filter-status');
   if(sEl){const sV=sEl.value;sEl.innerHTML=`<option value="">${t('allStatus')}</option><option value="open">${t('statusOpen')}</option><option value="done">${t('statusDone')}</option>`;sEl.value=sV;}
@@ -1495,8 +1513,9 @@ async function openDetail(id) {
 
   document.getElementById('detail-title').textContent = `#${p.nummer} – ${p.titel}`;
   document.getElementById('detail-badges').innerHTML = `
-    <span class="badge badge-${p.kategorie}">${p.kategorie==='critical'?t('catCritical'):t('catNonCritical')}</span>
-    <span class="badge badge-${p.status}">${p.status==='open'?t('statusOpen'):t('statusDone')}</span>`;
+    <span class="badge badge-${catCssClass(p.kategorie)}">${catLabel(p.kategorie)}</span>
+    <span class="badge badge-${p.status}">${p.status==='open'?t('statusOpen'):t('statusDone')}</span>
+    ${p.kategorie==='todo'&&p.zustaendig?`<span class="badge" style="background:#dbeafe;color:#1e40af;border:1px solid #3b82f6">👤 ${esc(p.zustaendig)}</span>`:''}`;
 
   const today=new Date(); today.setHours(0,0,0,0);
   const overdue=p.status==='open'&&p.due_date&&new Date(p.due_date+'T00:00:00')<today;
@@ -1574,11 +1593,30 @@ async function deletePunkt(id) {
 }
 
 // ===================== FORM =====================
+// Helpers for the 3-category system (critical / noncritical / todo)
+const TODO_ASSIGNEES = ['Sandra','Steffen','Monika','Detlef','Rainer','Heike'];
+function catLabel(k) {
+  if (k === 'critical') return t('catCritical');
+  if (k === 'todo')     return t('catTodo');
+  return t('catNonCritical');
+}
+function catCssClass(k) {
+  return (k === 'critical' || k === 'todo' || k === 'noncritical') ? k : 'noncritical';
+}
+function updateTodoVisibility() {
+  const sel = document.getElementById('f-kategorie');
+  const grp = document.getElementById('f-todo-group');
+  if (!sel || !grp) return;
+  grp.style.display = sel.value === 'todo' ? '' : 'none';
+}
+
 function resetForm() {
   editingId=null; currentPhotos=[];
   document.getElementById('form-title').textContent=t('formTitleNew');
   ['f-titel','f-beschreibung','f-loc-x','f-loc-y'].forEach(i=>document.getElementById(i).value='');
   document.getElementById('f-kategorie').value='critical';
+  const zEl=document.getElementById('f-zustaendig'); if(zEl) zEl.value='';
+  updateTodoVisibility();
   document.getElementById('f-duedate').value='';
   document.getElementById('foto-preview').innerHTML='';
   document.getElementById('plan-section').style.display='none';
@@ -1660,21 +1698,39 @@ async function savePunkt() {
   try{
     const locX=document.getElementById('f-loc-x').value;
     const locY=document.getElementById('f-loc-y').value;
+    const kategorie=document.getElementById('f-kategorie').value;
+    const zustaendig=document.getElementById('f-zustaendig')?.value || null;
+    // For "To-Do" category: assignee is mandatory and must be in the allowed list
+    if (kategorie === 'todo') {
+      if (!zustaendig || !TODO_ASSIGNEES.includes(zustaendig)) {
+        hideLoading(); btn.disabled=false;
+        alert('Bei Kategorie "To-Do" muss ein Zuständiger gewählt werden (Sandra, Steffen, Monika, Detlef, Rainer oder Heike).');
+        return;
+      }
+    }
     const data={
-      titel, kategorie:document.getElementById('f-kategorie').value,
+      titel, kategorie,
       beschreibung:document.getElementById('f-beschreibung').value.trim(),
       etage_id:etageId,
       verantwortlicher_id:document.getElementById('f-verantwortlicher').value||null,
       due_date:document.getElementById('f-duedate').value||null,
       loc_x:locX?parseFloat(locX):null, loc_y:locY?parseFloat(locY):null,
       foto_count:currentPhotos.length,
+      zustaendig: kategorie === 'todo' ? zustaendig : null,
     };
     // Aufgenommen von nur beim Erstellen setzen (nicht überschreiben bei Edit)
     if (!editingId) data.aufgenommen_von = currentUser ? (currentUser.charAt(0).toUpperCase() + currentUser.slice(1)) : 'Unbekannt';
 
     let punktId=editingId;
     if(editingId){
-      await sb.from('punkte').update(data).eq('id',editingId);
+      let upd = await sb.from('punkte').update(data).eq('id',editingId);
+      // Fallback: column zustaendig noch nicht angelegt
+      if (upd.error && /zustaendig/i.test(upd.error.message || '')) {
+        const {zustaendig:_z,...rest}=data;
+        if (kategorie === 'todo') alert('⚠️ Die Spalte "zustaendig" fehlt noch in der Datenbank — Zuständiger wird nicht gespeichert.\nBitte in Supabase SQL Editor ausführen:\n\nalter table public.punkte add column if not exists zustaendig text;');
+        upd = await sb.from('punkte').update(rest).eq('id',editingId);
+      }
+      if (upd.error) throw upd.error;
     } else {
       // Get next number
       const {data:meta}=await sb.from('meta').select('value').eq('key','counter').single();
@@ -1685,6 +1741,12 @@ async function savePunkt() {
       // Fallback: falls aufgenommen_von Spalte noch nicht existiert, nochmal ohne
       if(res.error && res.error.message && res.error.message.includes('aufgenommen_von')) {
         const {aufgenommen_von:_removed,...dataOhne}=insertData;
+        res=await sb.from('punkte').insert(dataOhne).select().single();
+      }
+      // Fallback: zustaendig-Spalte fehlt
+      if(res.error && /zustaendig/i.test(res.error.message || '')) {
+        const {zustaendig:_z,...dataOhne}=insertData;
+        if (kategorie === 'todo') alert('⚠️ Die Spalte "zustaendig" fehlt noch in der Datenbank — Zuständiger wird nicht gespeichert.\nBitte in Supabase SQL Editor ausführen:\n\nalter table public.punkte add column if not exists zustaendig text;');
         res=await sb.from('punkte').insert(dataOhne).select().single();
       }
       if(res.error)throw res.error;
@@ -1716,6 +1778,8 @@ async function editPunkt(id) {
   document.getElementById('form-title').textContent=t('formTitleEdit').replace('{n}', p.nummer);
   document.getElementById('f-titel').value=p.titel;
   document.getElementById('f-kategorie').value=p.kategorie;
+  const zEl=document.getElementById('f-zustaendig'); if(zEl) zEl.value=p.zustaendig||'';
+  updateTodoVisibility();
   document.getElementById('f-beschreibung').value=p.beschreibung||'';
   document.getElementById('f-etage').value=p.etage_id;
   document.getElementById('f-verantwortlicher').value=p.verantwortlicher_id||'';
@@ -1949,8 +2013,11 @@ async function renderDashboard() {
         <div class="db-wrap" id="wrap-${etage.id}">
           <img src="${etage.plan_base64}" alt="${esc(etage.name)}" draggable="false">
           ${located.map(p => {
-            const isCriticalOpen = p.kategorie === 'critical' && p.status === 'open';
-            const cls = p.status === 'done' ? 'done' : (isCriticalOpen ? 'critical-open' : 'noncritical-open');
+            let cls;
+            if (p.status === 'done')             cls = 'done';
+            else if (p.kategorie === 'critical') cls = 'critical-open';
+            else if (p.kategorie === 'todo')     cls = 'todo-open';
+            else                                  cls = 'noncritical-open';
             return `<div class="map-dot ${cls}"
               style="left:${p.loc_x}%;top:${p.loc_y}%"
               onmouseenter="showDotTooltip(event,'${p.id}')"
@@ -2186,7 +2253,7 @@ function showDotTooltip(event, id) {
     <div class="tt-num">Punkt #${p.nummer}</div>
     <div class="tt-title">${esc(p.titel)}</div>
     <div class="tt-meta">
-      <span class="badge badge-${p.kategorie}" style="font-size:0.7rem">${p.kategorie === 'critical' ? t('catCritical') : t('catNonCritical')}</span>
+      <span class="badge badge-${catCssClass(p.kategorie)}" style="font-size:0.7rem">${catLabel(p.kategorie)}</span>${p.kategorie==='todo'&&p.zustaendig?` <span class="tag" style="font-size:0.7rem;background:#dbeafe;color:#1e40af;border-color:#3b82f6">👤 ${esc(p.zustaendig)}</span>`:''}
       <span class="badge badge-${p.status}" style="font-size:0.7rem">${p.status === 'open' ? t('statusOpen') : t('statusDone')}</span>
     </div>
     ${contact ? `<div class="tt-extra">👷 ${esc(contact.name)}${contact.firma ? ` · ${esc(contact.firma)}` : ''}</div>` : ''}
@@ -2328,7 +2395,9 @@ async function exportPDFUniversal(filter, withPhotos, withPosition) {
     // Block background + border
     if (i%2===0) { doc.setFillColor(250,250,250); doc.roundedRect(MARGIN,curY,CONTENT_W,BLOCK_H,2,2,'F'); }
     doc.setDrawColor(220,220,220); doc.roundedRect(MARGIN,curY,CONTENT_W,BLOCK_H,2,2,'S');
-    doc.setFillColor(p.kategorie==='critical'?204:40, 0, p.kategorie==='critical'?0:40);
+    // Strip color: critical=red, todo=blue, noncritical=dark grey
+    const stripRGB = p.kategorie==='critical' ? [204,0,0] : p.kategorie==='todo' ? [59,130,246] : [40,40,40];
+    doc.setFillColor(stripRGB[0], stripRGB[1], stripRGB[2]);
     doc.rect(MARGIN,curY,2.5,BLOCK_H,'F');
 
     // Text links
@@ -2341,9 +2410,10 @@ async function exportPDFUniversal(filter, withPhotos, withPosition) {
     ty += tLines.length > 1 ? 9 : 5.5;
 
     doc.setFontSize(7.5); doc.setFont('helvetica','normal');
-    doc.setTextColor(p.kategorie==='critical'?204:40, 0, 0);
-    doc.text(p.kategorie==='critical'?t('pdfCritical'):t('pdfNonCritical'), MARGIN+4, ty);
-    const kw = doc.getTextWidth(p.kategorie==='critical'?t('pdfCritical'):t('pdfNonCritical'));
+    const pdfCatLabel = p.kategorie==='critical'?t('pdfCritical'):p.kategorie==='todo'?t('pdfTodo'):t('pdfNonCritical');
+    doc.setTextColor(stripRGB[0], stripRGB[1], stripRGB[2]);
+    doc.text(pdfCatLabel + (p.kategorie==='todo'&&p.zustaendig?' · '+p.zustaendig:''), MARGIN+4, ty);
+    const kw = doc.getTextWidth(pdfCatLabel + (p.kategorie==='todo'&&p.zustaendig?' · '+p.zustaendig:''));
     doc.setTextColor(p.status==='done'?22:overdue?204:120, p.status==='done'?163:0, p.status==='done'?74:0);
     doc.text('   '+(p.status==='done'?t('pdfDone'):overdue?t('pdfOverdueStatus'):t('pdfStatusOpen')), MARGIN+4+kw, ty);
     ty += 5;
@@ -2467,7 +2537,7 @@ async function exportExcelUniversal(filter, withPhotos, withPosition) {
 
       const row = ws.addRow({
         nr:'#'+(p.nummer||'?'), titel:p.titel||'',
-        kat:p.kategorie==='critical'?t('xlCritical'):t('xlNonCritical'),
+        kat:(p.kategorie==='critical'?t('xlCritical'):p.kategorie==='todo'?t('xlTodo')+(p.zustaendig?' ('+p.zustaendig+')':''):t('xlNonCritical')),
         status:p.status==='open'?(overdue?t('xlOverdue'):t('xlOpen')):t('xlDone'),
         etage:etage?.name||'-', verant:contact?.name||'-',
         aufgen:p.aufgenommen_von||'-',
@@ -2561,7 +2631,7 @@ function exportPDF(filter) {
     return [
       '#' + (p.nummer||'?'),
       p.titel || '',
-      p.kategorie === 'critical' ? t('xlCritical') : t('xlNonCritical'),
+      (p.kategorie === 'critical' ? t('xlCritical') : p.kategorie === 'todo' ? t('xlTodo')+(p.zustaendig?' ('+p.zustaendig+')':'') : t('xlNonCritical')),
       p.status === 'open' ? (overdue ? t('xlOverdue') : t('xlOpen')) : t('xlDone'),
       etage?.name || '-',
       contact?.name || '-',
@@ -2623,7 +2693,7 @@ function exportExcel(filter) {
     return {
       [t('xlNr')]: '#' + (p.nummer||'?'),
       [t('xlTitle')]: p.titel || '',
-      [t('xlCat')]: p.kategorie === 'critical' ? t('xlCritical') : t('xlNonCritical'),
+      [t('xlCat')]: (p.kategorie === 'critical' ? t('xlCritical') : p.kategorie === 'todo' ? t('xlTodo')+(p.zustaendig?' ('+p.zustaendig+')':'') : t('xlNonCritical')),
       [t('xlStatus')]: p.status === 'open' ? (overdue ? t('xlOverdue') : t('xlOpen')) : t('xlDone'),
       [t('xlFloor')]: etage?.name || '-',
       [t('xlResp')]: contact?.name || '-',
@@ -2732,10 +2802,9 @@ async function exportPDFMitPosition(filter) {
     doc.setDrawColor(220, 220, 220);
     doc.roundedRect(MARGIN, curY, CONTENT_W, BLOCK_H, 2, 2, 'S');
 
-    // Farbstreifen links (Critical = rot, Non-Critical = schwarz)
-    doc.setFillColor(p.kategorie === 'critical' ? 204 : 40,
-                     p.kategorie === 'critical' ? 0   : 40,
-                     p.kategorie === 'critical' ? 0   : 40);
+    // Farbstreifen links (Critical = rot, To-Do = blau, Non-Critical = schwarz)
+    const stripRGB2 = p.kategorie === 'critical' ? [204,0,0] : p.kategorie === 'todo' ? [59,130,246] : [40,40,40];
+    doc.setFillColor(stripRGB2[0], stripRGB2[1], stripRGB2[2]);
     doc.rect(MARGIN, curY, 2.5, BLOCK_H, 'F');
 
     // ---- TEXT LINKS ----
@@ -2906,7 +2975,7 @@ async function exportExcelMitBildern(filter) {
       const row = ws.addRow({
         nr:      '#' + (p.nummer || '?'),
         titel:   p.titel || '',
-        kat:     p.kategorie === 'critical' ? t('xlCritical') : t('xlNonCritical'),
+        kat:     (p.kategorie === 'critical' ? t('xlCritical') : p.kategorie === 'todo' ? t('xlTodo')+(p.zustaendig?' ('+p.zustaendig+')':'') : t('xlNonCritical')),
         status:  p.status === 'open' ? (overdue ? t('xlOverdue') : t('xlOpen')) : t('xlDone'),
         etage:   etage?.name || '-',
         verant:  contact?.name || '-',
