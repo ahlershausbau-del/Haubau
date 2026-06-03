@@ -614,7 +614,7 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
     </div>
     <div class="form-group"><label>Beschreibung</label><textarea id="f-beschreibung" placeholder="Detaillierte Beschreibung..."></textarea></div>
     <div class="grid-2">
-      <div class="form-group"><label>Etage *</label><select id="f-etage" onchange="onEtageChange()"><option value="">— Etage wählen —</option></select></div>
+      <div class="form-group"><label>Etage <span style="color:var(--muted);font-weight:400">(optional)</span></label><select id="f-etage" onchange="onEtageChange()"><option value="">— Keine / Kein Bezug zum Haus —</option></select></div>
       <div class="form-group"><label>Verantwortlicher</label><select id="f-verantwortlicher"><option value="">— Verantwortlichen wählen —</option></select></div>
     </div>
     <div class="form-group"><label>Fälligkeitsdatum</label><input id="f-duedate" type="date"></div>
@@ -970,7 +970,7 @@ const LANG = {
     labelTitle:'Titel *', placeholderTitle:'z.B. Riss in Außenwand',
     labelCat:'Kategorie *', labelDesc:'Beschreibung',
     placeholderDesc:'Detaillierte Beschreibung...',
-    labelFloor:'Etage *', placeholderFloor:'— Etage wählen —',
+    labelFloor:'Etage (optional)', placeholderFloor:'— Keine / Kein Bezug zum Haus —',
     labelResp:'Verantwortlicher', placeholderResp:'— Verantwortlichen wählen —',
     labelDue:'Fälligkeitsdatum',
     posHeading:'📍 Position auf Grundriss markieren',
@@ -1143,7 +1143,7 @@ const LANG = {
     labelTitle:'Title *', placeholderTitle:'e.g. Crack in outer wall',
     labelCat:'Category *', labelDesc:'Description',
     placeholderDesc:'Detailed description...',
-    labelFloor:'Floor *', placeholderFloor:'— Select floor —',
+    labelFloor:'Floor (optional)', placeholderFloor:'— None / Not related to house —',
     labelResp:'Responsible', placeholderResp:'— Select responsible —',
     labelDue:'Due Date',
     posHeading:'📍 Mark position on floor plan',
@@ -1884,7 +1884,7 @@ async function savePunkt() {
   const titel=document.getElementById('f-titel').value.trim();
   const etageId=document.getElementById('f-etage').value;
   if(!titel){alert(t('alertTitleReq'));return;}
-  if(!etageId){alert(t('alertFloorReq'));return;}
+  // Etage ist optional — Punkte ohne Bezug zum Haus sind erlaubt
 
   const btn=document.getElementById('save-btn'); btn.disabled=true;
   showLoading(t('ldgSave'));
@@ -1904,7 +1904,7 @@ async function savePunkt() {
     const data={
       titel, kategorie,
       beschreibung:document.getElementById('f-beschreibung').value.trim(),
-      etage_id:etageId,
+      etage_id:etageId||null,
       verantwortlicher_id:document.getElementById('f-verantwortlicher').value||null,
       due_date:document.getElementById('f-duedate').value||null,
       loc_x:locX?parseFloat(locX):null, loc_y:locY?parseFloat(locY):null,
