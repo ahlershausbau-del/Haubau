@@ -680,8 +680,37 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <button class="btn btn-primary" id="detail-edit-btn">✏️ Bearbeiten</button>
       <button class="btn btn-success" id="detail-done-btn">✓ Als erledigt markieren</button>
+      <button class="btn btn-ghost" id="detail-print-btn">🖨️ Etikett</button>
       <button class="btn btn-danger" id="detail-del-btn">🗑️ Löschen</button>
     </div>
+  </div>
+</div>
+
+<!-- ETIKETTEN-DRUCK MODAL -->
+<div class="modal-overlay" id="modal-print-label">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header">
+      <h2>🖨️ Etikett — NIIMBOT B1</h2>
+      <button class="modal-close" onclick="closeModal('modal-print-label')">×</button>
+    </div>
+    <div style="background:#f5f5f5;border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;justify-content:center;align-items:center;min-height:120px;margin-bottom:14px">
+      <canvas id="label-preview" style="max-width:100%;height:auto;background:white;box-shadow:0 2px 8px rgba(0,0,0,0.15);border-radius:4px;image-rendering:pixelated"></canvas>
+    </div>
+    <div id="label-print-options" style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-primary" id="label-bt-btn" onclick="printLabelBluetooth()" style="display:none">📱 Direkt drucken (Bluetooth)</button>
+      <button class="btn btn-success" onclick="downloadLabelPNG()">💾 Als PNG speichern</button>
+      <button class="btn btn-ghost" onclick="printLabelSheet()">📄 Aktuelle Liste als A4-Bogen (PDF)</button>
+    </div>
+    <div id="label-bt-status" style="margin-top:10px;padding:10px;border-radius:8px;font-size:0.85rem;display:none"></div>
+    <details style="margin-top:14px;font-size:0.82rem;color:var(--muted)">
+      <summary style="cursor:pointer;font-weight:600">ℹ️ Hinweise</summary>
+      <ul style="margin-top:8px;padding-left:18px;line-height:1.5">
+        <li><strong>Direktdruck</strong> funktioniert auf Android (Chrome/Edge), Windows und Mac. <strong>Nicht auf iPhone/iPad</strong> — Apple unterstützt kein Web-Bluetooth.</li>
+        <li>Für <strong>iPhone</strong>: PNG speichern → mit der offiziellen NIIMBOT-App drucken.</li>
+        <li><strong>A4-Bogen</strong> druckt alle aktuell <em>gefilterten</em> Punkte (4 × 8 Etiketten pro Seite zum Aufkleben).</li>
+        <li>QR-Code öffnet beim Scannen diesen Punkt in der App.</li>
+      </ul>
+    </details>
   </div>
 </div>
 
@@ -741,6 +770,7 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <script>
 // ===================== SUPABASE CONFIG (fest eingebaut) =====================
 const SUPABASE_URL = 'https://knwlvsndlhlxozyqmvoe.supabase.co';
@@ -1377,6 +1407,8 @@ async function startApp() {
   hideLoading();
   applyLang();
   showView('liste');
+  // QR-Code Deep Link: if URL had ?punkt=<id>, open that detail now
+  if (typeof maybeOpenDeepLink === 'function') maybeOpenDeepLink();
 }
 
 async function loadAll() {
@@ -1561,6 +1593,8 @@ async function openDetail(id) {
   doneBtn.onclick=()=>toggleDone(id,p.status);
   document.getElementById('detail-del-btn').textContent=t('btnDelete');
   document.getElementById('detail-del-btn').onclick=()=>deletePunkt(id);
+  const printBtn = document.getElementById('detail-print-btn');
+  if (printBtn) printBtn.onclick = () => openPrintLabelModal(id);
   openModal('modal-detail');
 }
 
@@ -3960,6 +3994,317 @@ function albumDrop(e) {
   albumDragLeave(e);
   const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
   if (files.length) handleAlbumUpload({ files });
+}
+
+// ===================== LABEL PRINTING (NIIMBOT B1) =====================
+// Label format: 50 x 30 mm @ 203 DPI = 400 x 240 dots
+const LABEL_W_MM   = 50;
+const LABEL_H_MM   = 30;
+const LABEL_DPI    = 203;
+const LABEL_W_PX   = Math.round(LABEL_W_MM * LABEL_DPI / 25.4); // 400
+const LABEL_H_PX   = Math.round(LABEL_H_MM * LABEL_DPI / 25.4); // 240
+let currentLabelPunktId = null; // which punkt is shown in the print modal
+
+function punktDeepLink(id) {
+  return location.origin + location.pathname + '?punkt=' + id;
+}
+
+/** Wrap text into lines that fit within maxWidth pixels. */
+function wrapTextLines(ctx, text, maxWidth) {
+  if (!text) return [];
+  const words = String(text).split(/\s+/);
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    const test = cur ? cur + ' ' + w : w;
+    if (ctx.measureText(test).width > maxWidth && cur) {
+      lines.push(cur);
+      cur = w;
+    } else {
+      cur = test;
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+/** Renders a NIIMBOT B1 label canvas (400x240 px, 50x30 mm @ 203 DPI). */
+async function buildLabelCanvas(p) {
+  const canvas = document.createElement('canvas');
+  canvas.width = LABEL_W_PX;
+  canvas.height = LABEL_H_PX;
+  const ctx = canvas.getContext('2d');
+  // White background
+  ctx.fillStyle = 'white';
+  ctx.fillRect(0, 0, LABEL_W_PX, LABEL_H_PX);
+  ctx.fillStyle = 'black';
+  ctx.textBaseline = 'top';
+
+  // QR area on the right
+  const qrSize = Math.round(22 * LABEL_DPI / 25.4); // ~176 px = 22 mm
+  const qrX = LABEL_W_PX - qrSize - Math.round(2 * LABEL_DPI / 25.4); // 2 mm right margin
+  const qrY = Math.round((LABEL_H_PX - qrSize) / 2);
+
+  // Generate QR onto separate canvas, then draw
+  try {
+    const qrCanvas = document.createElement('canvas');
+    await QRCode.toCanvas(qrCanvas, punktDeepLink(p.id), {
+      width: qrSize,
+      margin: 0,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#000000ff', light: '#ffffffff' }
+    });
+    ctx.drawImage(qrCanvas, qrX, qrY);
+  } catch (e) {
+    console.warn('QR generation failed:', e);
+    ctx.strokeRect(qrX, qrY, qrSize, qrSize);
+    ctx.font = '14px sans-serif';
+    ctx.fillText('QR?', qrX + qrSize/2 - 14, qrY + qrSize/2 - 7);
+  }
+
+  // Text area on the left
+  const textX = Math.round(3 * LABEL_DPI / 25.4); // 3 mm
+  const textRight = qrX - Math.round(2 * LABEL_DPI / 25.4);
+  const textMaxW = textRight - textX;
+
+  // 1. Big number
+  ctx.font = `bold ${Math.round(8 * LABEL_DPI / 25.4)}px sans-serif`;
+  ctx.fillText('#' + (p.nummer || '?'), textX, Math.round(2 * LABEL_DPI / 25.4));
+
+  // 2. Category line
+  ctx.font = `bold ${Math.round(2.6 * LABEL_DPI / 25.4)}px sans-serif`;
+  const catLine =
+    p.kategorie === 'critical'  ? '● CRITICAL' :
+    p.kategorie === 'todo'      ? '● TO-DO' + (p.zustaendig ? ' · ' + p.zustaendig : '') :
+                                  '● NON-CRITICAL';
+  ctx.fillText(catLine, textX, Math.round(12 * LABEL_DPI / 25.4));
+
+  // 3. Title (wrapped, max 3 lines)
+  ctx.font = `${Math.round(3 * LABEL_DPI / 25.4)}px sans-serif`;
+  const titleLines = wrapTextLines(ctx, p.titel || '', textMaxW);
+  let ty = Math.round(17 * LABEL_DPI / 25.4);
+  const lineH = Math.round(3.6 * LABEL_DPI / 25.4);
+  const maxLines = 3;
+  for (let i = 0; i < Math.min(titleLines.length, maxLines); i++) {
+    let line = titleLines[i];
+    if (i === maxLines - 1 && titleLines.length > maxLines) line = line.slice(0, -2) + '…';
+    ctx.fillText(line, textX, ty);
+    ty += lineH;
+  }
+
+  return canvas;
+}
+
+/** Open the print-label modal for a specific punkt. */
+async function openPrintLabelModal(id) {
+  const p = allPunkte.find(x => x.id === id);
+  if (!p) return;
+  currentLabelPunktId = id;
+  // Show Bluetooth button only if Web Bluetooth is available
+  const btBtn = document.getElementById('label-bt-btn');
+  if (btBtn) btBtn.style.display = ('bluetooth' in navigator) ? '' : 'none';
+  const statusEl = document.getElementById('label-bt-status');
+  if (statusEl) statusEl.style.display = 'none';
+  // Render preview
+  const canvas = await buildLabelCanvas(p);
+  const preview = document.getElementById('label-preview');
+  preview.width = canvas.width;
+  preview.height = canvas.height;
+  preview.getContext('2d').drawImage(canvas, 0, 0);
+  openModal('modal-print-label');
+}
+
+/** Download the currently-previewed label as a PNG file. */
+async function downloadLabelPNG() {
+  if (!currentLabelPunktId) return;
+  const p = allPunkte.find(x => x.id === currentLabelPunktId);
+  if (!p) return;
+  const canvas = await buildLabelCanvas(p);
+  canvas.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const safeTitle = (p.titel || '').replace(/[^a-zA-Z0-9äöüÄÖÜß_-]+/g, '_').slice(0, 24);
+    a.download = `Etikett_${p.nummer || 'x'}_${safeTitle}.png`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
+  }, 'image/png');
+}
+
+/** Print an A4 sheet with multiple labels — one per filtered/visible punkte. */
+async function printLabelSheet() {
+  // Use the SAME filter logic the user has applied in the list view
+  const eF = document.getElementById('filter-etage')?.value || '';
+  const kF = document.getElementById('filter-kategorie')?.value || '';
+  const sF = document.getElementById('filter-status')?.value || '';
+  const qF = (document.getElementById('filter-search')?.value || '').toLowerCase();
+  let punkte = allPunkte.filter(p => {
+    if (eF && p.etage_id !== eF) return false;
+    if (kF && p.kategorie !== kF) return false;
+    if (sF && p.status !== sF) return false;
+    if (qF) {
+      const hay = (p.titel + ' ' + (p.beschreibung || '') + ' #' + p.nummer).toLowerCase();
+      if (!hay.includes(qF)) return false;
+    }
+    return true;
+  });
+  if (!punkte.length) { alert('Keine Punkte für die aktuellen Filter — passe die Filter in der Liste an.'); return; }
+  if (punkte.length > 200) {
+    if (!confirm(`${punkte.length} Etiketten werden gedruckt — wirklich fortfahren?`)) return;
+  }
+  // Sort by number
+  punkte.sort((a, b) => (a.nummer || 0) - (b.nummer || 0));
+
+  showLoading('Erzeuge A4-Bogen...');
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    // A4 = 210 x 297 mm. Grid: 4 cols x 8 rows = 32/page. Cell 50 x 30 mm.
+    const cellW = LABEL_W_MM;
+    const cellH = LABEL_H_MM;
+    const cols = 4;
+    const rows = 8;
+    const totalW = cols * cellW; // 200
+    const marginX = (210 - totalW) / 2; // 5
+    const marginY = 8;
+    const gapY = 1; // mm between rows
+    let perPage = cols * rows;
+
+    for (let i = 0; i < punkte.length; i++) {
+      const p = punkte[i];
+      const onPage = i % perPage;
+      if (onPage === 0 && i !== 0) doc.addPage();
+      if (i % 8 === 0) showLoading(`Erzeuge A4-Bogen... (${i+1} / ${punkte.length})`);
+      const col = onPage % cols;
+      const row = Math.floor(onPage / cols);
+      const x = marginX + col * cellW;
+      const y = marginY + row * (cellH + gapY);
+      const canvas = await buildLabelCanvas(p);
+      const data = canvas.toDataURL('image/png');
+      doc.addImage(data, 'PNG', x, y, cellW, cellH);
+      // Cut guides
+      doc.setDrawColor(200, 200, 200);
+      doc.setLineWidth(0.1);
+      doc.rect(x, y, cellW, cellH);
+    }
+    doc.save(`Etiketten_${new Date().toISOString().slice(0,10)}.pdf`);
+  } catch (e) {
+    console.error(e);
+    alert('Fehler beim Erzeugen des A4-Bogens:\n' + (e.message || e));
+  }
+  hideLoading();
+}
+
+// ===================== BLUETOOTH PRINT (niimblue lazy-loaded) =====================
+let _niimbluelib = null;
+async function loadNiimbluelib() {
+  if (_niimbluelib) return _niimbluelib;
+  // ESM dynamic import — try multiple CDNs for resilience
+  const sources = [
+    'https://esm.sh/@mmote/niimbluelib@0.0.45',
+    'https://cdn.jsdelivr.net/npm/@mmote/niimbluelib@0.0.45/+esm',
+    'https://esm.sh/@mmote/niimbluelib'
+  ];
+  let lastErr;
+  for (const src of sources) {
+    try {
+      _niimbluelib = await import(src);
+      return _niimbluelib;
+    } catch (e) {
+      lastErr = e;
+      console.warn('niimblue load from', src, 'failed:', e?.message || e);
+    }
+  }
+  throw lastErr || new Error('Cannot load niimbluelib from any CDN');
+}
+
+function setBtStatus(msg, color) {
+  const el = document.getElementById('label-bt-status');
+  if (!el) return;
+  el.style.display = '';
+  el.style.background = color === 'red' ? '#fee2e2' : color === 'green' ? '#dcfce7' : '#dbeafe';
+  el.style.border = '1px solid ' + (color === 'red' ? '#fca5a5' : color === 'green' ? '#86efac' : '#93c5fd');
+  el.style.color = color === 'red' ? '#991b1b' : color === 'green' ? '#166534' : '#1e40af';
+  el.textContent = msg;
+}
+
+async function printLabelBluetooth() {
+  if (!currentLabelPunktId) return;
+  if (!('bluetooth' in navigator)) {
+    setBtStatus('❌ Dein Browser unterstützt kein Web-Bluetooth. Nutze "PNG speichern" und drucke aus der NIIMBOT-App.', 'red');
+    return;
+  }
+  const p = allPunkte.find(x => x.id === currentLabelPunktId);
+  if (!p) return;
+  const btn = document.getElementById('label-bt-btn');
+  if (btn) btn.disabled = true;
+  try {
+    setBtStatus('⏳ Lade Drucker-Bibliothek...', 'blue');
+    const lib = await loadNiimbluelib();
+    const canvas = await buildLabelCanvas(p);
+    const { NiimbotBluetoothClient, ImageEncoder } = lib;
+    const client = new NiimbotBluetoothClient();
+    setBtStatus('🔵 Verbinde mit Drucker (B1) — bitte im Pop-up auswählen...', 'blue');
+    await client.connect();
+    setBtStatus('🖨️ Sende Etikett zum Drucker...', 'blue');
+    const encoded = ImageEncoder.encodeCanvas(canvas, 'left');
+    // Modern niimblue API: newPrintTask(...).printPage(...).waitForFinished().endPrint()
+    // Fallback to older direct print() if newPrintTask isn't exposed.
+    if (typeof client.abstraction.newPrintTask === 'function') {
+      const task = client.abstraction.newPrintTask('B1', { totalPages: 1, density: 3, labelType: 1, quantity: 1 });
+      await task.printPage(encoded, 1);
+      await task.waitForFinished();
+      await task.endPrint();
+    } else {
+      await client.abstraction.print(encoded, { density: 3, labelType: 1, quantity: 1 });
+      if (typeof client.abstraction.waitUntilPrintFinishedByPageIndex === 'function') {
+        await client.abstraction.waitUntilPrintFinishedByPageIndex(1, 30 * 1000);
+      }
+    }
+    setBtStatus('✅ Etikett gedruckt!', 'green');
+    try { await client.disconnect(); } catch {}
+  } catch (e) {
+    console.error('BT print failed:', e);
+    const msg = e?.message || String(e);
+    let hint = '';
+    if (/User cancelled|chooser/i.test(msg)) hint = '\n(Du hast den Drucker-Dialog abgebrochen.)';
+    else if (/import|Failed to fetch|network/i.test(msg)) hint = '\nDrucker-Bibliothek konnte nicht geladen werden — Internetverbindung prüfen.';
+    else if (/GATT|disconnected/i.test(msg)) hint = '\nVerbindung verloren. Drucker eingeschaltet? Akku okay? Nochmal versuchen.';
+    setBtStatus('❌ Fehler: ' + msg + hint, 'red');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ===================== URL DEEP LINK (?punkt=<id>) =====================
+let pendingPunktDeepLink = null;
+(function checkPunktDeepLink() {
+  try {
+    const params = new URLSearchParams(location.search);
+    const pid = params.get('punkt');
+    if (pid) {
+      pendingPunktDeepLink = pid;
+      // Clean URL so a later refresh after navigation doesn't re-trigger
+      history.replaceState({}, '', location.pathname);
+    }
+  } catch {}
+})();
+
+async function maybeOpenDeepLink() {
+  if (!pendingPunktDeepLink) return;
+  const pid = pendingPunktDeepLink;
+  pendingPunktDeepLink = null;
+  // Wait until allPunkte is populated
+  for (let i = 0; i < 20 && (!allPunkte || !allPunkte.length); i++) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+  if (allPunkte && allPunkte.find(x => x.id === pid)) {
+    showView('liste');
+    setTimeout(() => openDetail(pid), 100);
+  } else {
+    alert('Der gescannte Punkt wurde nicht gefunden — möglicherweise gelöscht.');
+  }
 }
 
 // ===================== MODALS =====================
