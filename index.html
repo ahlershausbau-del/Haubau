@@ -260,6 +260,27 @@
 </head>
 <body>
 
+<!-- ==================== PUBLIC VIEW (per QR-Scan ohne Login) ==================== -->
+<div id="public-view" style="display:none;min-height:100vh;background:linear-gradient(135deg,#111 0%,#cc0000 100%);padding:16px">
+  <div style="max-width:680px;margin:0 auto">
+    <div style="background:white;border-radius:18px;padding:22px 22px 26px;box-shadow:0 16px 48px rgba(0,0,0,0.35)">
+      <div style="display:flex;align-items:center;gap:10px;padding-bottom:14px;border-bottom:2px solid var(--border)">
+        <span style="font-size:1.6rem">🏗️</span>
+        <div>
+          <div style="font-weight:700;font-size:1.1rem;color:var(--text)">Hausbau Nacharbeit</div>
+          <div style="font-size:0.78rem;color:var(--muted)">Öffentliche Vorschau · Gescannt von Baustelle</div>
+        </div>
+      </div>
+      <div id="public-view-content" style="margin-top:18px"></div>
+      <div style="margin-top:22px;padding-top:16px;border-top:1px solid var(--border);display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between">
+        <div style="font-size:0.78rem;color:var(--muted);max-width:380px">Du siehst nur eine Vorschau dieses Punkts. Für Bearbeitung, Status-Änderungen oder Fotos hochladen → anmelden:</div>
+        <button class="btn btn-primary" onclick="goToLoginFromPublic()">🔑 Anmelden</button>
+      </div>
+    </div>
+    <div style="text-align:center;color:rgba(255,255,255,0.65);font-size:0.75rem;margin-top:14px">Hausbau Nacharbeit · ahlershausbau-del</div>
+  </div>
+</div>
+
 <!-- ==================== LOGIN ==================== -->
 <div id="login-screen">
   <div class="login-card">
@@ -4028,24 +4049,27 @@ function wrapTextLines(ctx, text, maxWidth) {
   return lines;
 }
 
-/** Renders a NIIMBOT B1 label canvas (400x240 px, 50x30 mm @ 203 DPI). */
+/** Renders a NIIMBOT B1 label canvas (400x240 px, 50x30 mm @ 203 DPI).
+ *  Layout: Left = #Nr (big) + Kategorie + Titel (2 lines) + Beschreibung (3 lines)
+ *          Right = QR with deep link to the point's public preview
+ */
 async function buildLabelCanvas(p) {
   const canvas = document.createElement('canvas');
   canvas.width = LABEL_W_PX;
   canvas.height = LABEL_H_PX;
   const ctx = canvas.getContext('2d');
-  // White background
   ctx.fillStyle = 'white';
   ctx.fillRect(0, 0, LABEL_W_PX, LABEL_H_PX);
   ctx.fillStyle = 'black';
   ctx.textBaseline = 'top';
 
-  // QR area on the right
-  const qrSize = Math.round(22 * LABEL_DPI / 25.4); // ~176 px = 22 mm
-  const qrX = LABEL_W_PX - qrSize - Math.round(2 * LABEL_DPI / 25.4); // 2 mm right margin
-  const qrY = Math.round((LABEL_H_PX - qrSize) / 2);
+  // mm-to-px helper for this label
+  const px = mm => Math.round(mm * LABEL_DPI / 25.4);
 
-  // Generate QR onto separate canvas, then draw
+  // QR — kleiner als vorher (20 statt 22 mm) damit Beschreibung Platz bekommt
+  const qrSize = px(20);
+  const qrX = LABEL_W_PX - qrSize - px(2);
+  const qrY = Math.round((LABEL_H_PX - qrSize) / 2);
   try {
     const qrCanvas = document.createElement('canvas');
     await QRCode.toCanvas(qrCanvas, punktDeepLink(p.id), {
@@ -4062,34 +4086,59 @@ async function buildLabelCanvas(p) {
     ctx.fillText('QR?', qrX + qrSize/2 - 14, qrY + qrSize/2 - 7);
   }
 
-  // Text area on the left
-  const textX = Math.round(3 * LABEL_DPI / 25.4); // 3 mm
-  const textRight = qrX - Math.round(2 * LABEL_DPI / 25.4);
+  // Text area links — neue mehr Platz (24 mm breit)
+  const textX = px(2);
+  const textRight = qrX - px(2);
   const textMaxW = textRight - textX;
 
-  // 1. Big number
-  ctx.font = `bold ${Math.round(8 * LABEL_DPI / 25.4)}px sans-serif`;
-  ctx.fillText('#' + (p.nummer || '?'), textX, Math.round(2 * LABEL_DPI / 25.4));
+  // 1. Große Nummer (~6 mm)
+  ctx.font = `bold ${px(6.5)}px sans-serif`;
+  ctx.fillText('#' + (p.nummer || '?'), textX, px(1));
 
-  // 2. Category line
-  ctx.font = `bold ${Math.round(2.6 * LABEL_DPI / 25.4)}px sans-serif`;
+  // 2. Kategorie-Zeile (bold, kleiner)
+  ctx.font = `bold ${px(2.2)}px sans-serif`;
   const catLine =
     p.kategorie === 'critical'  ? '● CRITICAL' :
     p.kategorie === 'todo'      ? '● TO-DO' + (p.zustaendig ? ' · ' + p.zustaendig : '') :
                                   '● NON-CRITICAL';
-  ctx.fillText(catLine, textX, Math.round(12 * LABEL_DPI / 25.4));
+  ctx.fillText(catLine, textX, px(8.5));
 
-  // 3. Title (wrapped, max 3 lines)
-  ctx.font = `${Math.round(3 * LABEL_DPI / 25.4)}px sans-serif`;
+  // 3. Titel (max 2 Zeilen)
+  ctx.font = `bold ${px(2.8)}px sans-serif`;
   const titleLines = wrapTextLines(ctx, p.titel || '', textMaxW);
-  let ty = Math.round(17 * LABEL_DPI / 25.4);
-  const lineH = Math.round(3.6 * LABEL_DPI / 25.4);
-  const maxLines = 3;
-  for (let i = 0; i < Math.min(titleLines.length, maxLines); i++) {
+  let ty = px(12);
+  const titleLineH = px(3.4);
+  const maxTitleLines = 2;
+  for (let i = 0; i < Math.min(titleLines.length, maxTitleLines); i++) {
     let line = titleLines[i];
-    if (i === maxLines - 1 && titleLines.length > maxLines) line = line.slice(0, -2) + '…';
+    if (i === maxTitleLines - 1 && titleLines.length > maxTitleLines) {
+      // truncate last visible line with ellipsis
+      while (line.length > 3 && ctx.measureText(line + '…').width > textMaxW) line = line.slice(0, -1);
+      line = line + '…';
+    }
     ctx.fillText(line, textX, ty);
-    ty += lineH;
+    ty += titleLineH;
+  }
+  ty += px(0.5); // small gap before description
+
+  // 4. Beschreibung (max 3 Zeilen, kleinere Schrift)
+  if (p.beschreibung) {
+    ctx.font = `${px(2.1)}px sans-serif`;
+    const descLineH = px(2.6);
+    // Replace newlines with spaces so wrapping handles full text
+    const flatDesc = String(p.beschreibung).replace(/\s+/g, ' ').trim();
+    const descLines = wrapTextLines(ctx, flatDesc, textMaxW);
+    const maxDescLines = Math.max(1, Math.floor((LABEL_H_PX - ty - px(1)) / descLineH));
+    const showLines = Math.min(descLines.length, maxDescLines);
+    for (let i = 0; i < showLines; i++) {
+      let line = descLines[i];
+      if (i === showLines - 1 && descLines.length > showLines) {
+        while (line.length > 3 && ctx.measureText(line + '…').width > textMaxW) line = line.slice(0, -1);
+        line = line + '…';
+      }
+      ctx.fillText(line, textX, ty);
+      ty += descLineH;
+    }
   }
 
   return canvas;
@@ -4278,16 +4327,14 @@ async function printLabelBluetooth() {
 }
 
 // ===================== URL DEEP LINK (?punkt=<id>) =====================
+// We DON'T clean the URL here — that way a refresh on the public-view page still works.
+// URL gets cleaned only after the deep link is successfully consumed by the logged-in user.
 let pendingPunktDeepLink = null;
 (function checkPunktDeepLink() {
   try {
     const params = new URLSearchParams(location.search);
     const pid = params.get('punkt');
-    if (pid) {
-      pendingPunktDeepLink = pid;
-      // Clean URL so a later refresh after navigation doesn't re-trigger
-      history.replaceState({}, '', location.pathname);
-    }
+    if (pid) pendingPunktDeepLink = pid;
   } catch {}
 })();
 
@@ -4299,6 +4346,8 @@ async function maybeOpenDeepLink() {
   for (let i = 0; i < 20 && (!allPunkte || !allPunkte.length); i++) {
     await new Promise(r => setTimeout(r, 100));
   }
+  // Now safe to clean the URL — deep link is being consumed
+  try { history.replaceState({}, '', location.pathname); } catch {}
   if (allPunkte && allPunkte.find(x => x.id === pid)) {
     showView('liste');
     setTimeout(() => openDetail(pid), 100);
@@ -4323,10 +4372,99 @@ function storageGet(key) { try { return localStorage.getItem(key); } catch { ret
 function storageSet(key, val) { try { localStorage.setItem(key, val); } catch {} }
 function storageDel(key) { try { localStorage.removeItem(key); } catch {} }
 
+// ===================== PUBLIC VIEW (QR-Scan ohne Login) =====================
+async function showPublicView(punktId) {
+  document.getElementById('login-screen').style.display = 'none';
+  const view = document.getElementById('public-view');
+  const content = document.getElementById('public-view-content');
+  view.style.display = 'block';
+  content.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted)"><div class="loading-spinner" style="margin:0 auto 12px"></div>Lade Punkt...</div>';
+  try {
+    // Build a temporary supabase client just for this fetch (the main one is created after login)
+    const { createClient } = supabase;
+    const sbPub = createClient(SUPABASE_URL, SUPABASE_KEY);
+    // Fetch the punkt + its etage name + photos in parallel
+    const [pRes, fotosRes] = await Promise.all([
+      sbPub.from('punkte').select('*').eq('id', punktId).single(),
+      sbPub.from('photos').select('base64').eq('punkt_id', punktId).order('idx')
+    ]);
+    if (pRes.error || !pRes.data) {
+      content.innerHTML = '<div style="text-align:center;padding:30px;color:var(--danger)"><div style="font-size:2.4rem">❓</div><div style="font-weight:600;margin-top:8px">Punkt nicht gefunden</div><div style="font-size:0.85rem;color:var(--muted);margin-top:6px">Der gescannte Punkt existiert nicht mehr — möglicherweise gelöscht.</div></div>';
+      return;
+    }
+    const p = pRes.data;
+    // Lookup floor name (separate query for etage so we don't fail if missing)
+    let etageName = '';
+    if (p.etage_id) {
+      try {
+        const eRes = await sbPub.from('etagen').select('name').eq('id', p.etage_id).single();
+        if (eRes.data) etageName = eRes.data.name;
+      } catch {}
+    }
+    const fotos = (fotosRes.data || []).map(r => r.base64);
+
+    const catBadgeCss = p.kategorie === 'critical'
+      ? 'background:#fee2e2;color:#cc0000;border:1px solid #cc0000'
+      : p.kategorie === 'todo'
+      ? 'background:#dbeafe;color:#1e40af;border:1px solid #3b82f6'
+      : 'background:#f0f0f0;color:#111;border:1px solid #333';
+    const catText = p.kategorie === 'critical' ? '🔴 Critical' : p.kategorie === 'todo' ? '📋 To-Do' : '⚫ Non-Critical';
+    const statusCss = p.status === 'done'
+      ? 'background:#dcfce7;color:#166534;border:1px solid #16a34a'
+      : 'background:#fff7ed;color:#9a3412;border:1px solid #f97316';
+    const statusText = p.status === 'done' ? '✓ Erledigt' : '🟡 Offen';
+
+    const today = new Date(); today.setHours(0,0,0,0);
+    const overdue = p.status === 'open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
+    const dueStr = p.due_date ? new Date(p.due_date+'T00:00:00').toLocaleDateString('de-DE') : '';
+
+    let fotosHtml = '';
+    if (fotos.length) {
+      fotosHtml = '<div style="margin-top:18px"><div style="font-weight:600;margin-bottom:8px;color:var(--text)">📷 Fotos (' + fotos.length + ')</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">' +
+        fotos.map(b64 => `<img src="${b64}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.12)" onclick="window.open(this.src,'_blank')">`).join('') +
+        '</div></div>';
+    }
+
+    content.innerHTML = `
+      <div style="margin-bottom:12px">
+        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+          <span style="font-size:1.6rem;font-weight:800;color:#cc0000">#${p.nummer||'?'}</span>
+          <h2 style="font-size:1.3rem;font-weight:700;color:var(--text);margin:0">${esc(p.titel||'(ohne Titel)')}</h2>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <span class="badge" style="${catBadgeCss}">${catText}</span>
+          <span class="badge" style="${statusCss}">${statusText}</span>
+          ${p.kategorie==='todo'&&p.zustaendig?`<span class="badge" style="background:#dbeafe;color:#1e40af;border:1px solid #3b82f6">👤 ${esc(p.zustaendig)}</span>`:''}
+          ${etageName?`<span class="tag">🏢 ${esc(etageName)}</span>`:''}
+          ${dueStr?`<span class="tag" style="${overdue?'color:#cc0000;font-weight:600':''}">📅 ${dueStr}${overdue?' ⚠️':''}</span>`:''}
+        </div>
+      </div>
+      ${p.beschreibung?`<div style="margin-top:16px;padding:14px 16px;background:#fafafa;border-left:4px solid ${p.kategorie==='critical'?'#cc0000':p.kategorie==='todo'?'#3b82f6':'#111'};border-radius:6px"><div style="font-weight:600;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:6px">Beschreibung</div><div style="white-space:pre-wrap;color:var(--text);line-height:1.55">${esc(p.beschreibung)}</div></div>`:''}
+      ${fotosHtml}
+      ${p.aufgenommen_von?`<div style="margin-top:18px;font-size:0.8rem;color:var(--muted)">📝 Erfasst von <strong>${esc(p.aufgenommen_von)}</strong>${p.erstellt?` am ${new Date(p.erstellt).toLocaleDateString('de-DE')}`:''}</div>`:''}
+    `;
+  } catch (e) {
+    console.error('public view error:', e);
+    content.innerHTML = '<div style="text-align:center;padding:30px;color:var(--danger)"><div style="font-size:2.4rem">⚠️</div><div style="font-weight:600;margin-top:8px">Fehler beim Laden</div><div style="font-size:0.82rem;color:var(--muted);margin-top:6px">' + esc(e.message || String(e)) + '</div></div>';
+  }
+}
+
+function goToLoginFromPublic() {
+  // Re-store the punkt id so after login the user is sent to the detail
+  pendingPunktDeepLink = sessionStorage.getItem('publicPunktId') || pendingPunktDeepLink;
+  document.getElementById('public-view').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+}
+
 // ===================== BOOT =====================
-applyLang(); // Apply language immediately (before login)
+applyLang(); // Apply language immediately (before login/public view)
 const loggedInUser = storageGet('auth-user');
-if (loggedInUser && USERS[loggedInUser]) {
+// pendingPunktDeepLink was set earlier by the IIFE in the LABEL section
+if (pendingPunktDeepLink && !(loggedInUser && USERS[loggedInUser])) {
+  // Not logged in + QR-scan deep link -> show read-only public view
+  sessionStorage.setItem('publicPunktId', pendingPunktDeepLink);
+  showPublicView(pendingPunktDeepLink);
+} else if (loggedInUser && USERS[loggedInUser]) {
   currentUser = loggedInUser;
   document.getElementById('login-screen').style.display = 'none';
   setNavUser(loggedInUser);
