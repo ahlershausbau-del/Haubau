@@ -4896,14 +4896,39 @@ const voiceState = {
   rec: null,
   recording: false,
   userStopped: false,
-  finalText: '',
-  interimText: '',
+  finalText: '',          // committed text from previous sessions
+  sessionText: '',        // current session's latest final (REPLACED on each isFinal event, NOT appended)
+  interimText: '',        // current session's interim (live preview)
   startTs: 0,
   timerId: null,
   parsed: null,
   restartTimer: null,
   supported: ('SpeechRecognition' in window) || ('webkitSpeechRecognition' in window)
 };
+
+// Smart append: if `next` starts with the suffix of `prev`, only add the
+// non-overlapping tail. This handles Android Chrome quirks where the
+// recognizer emits a final result whose text overlaps the previous final.
+function smartAppend(prev, next) {
+  prev = (prev || '').trim();
+  next = (next || '').trim();
+  if (!prev) return next;
+  if (!next) return prev;
+  const lp = prev.toLowerCase();
+  const ln = next.toLowerCase();
+  // If next is fully contained in prev tail, ignore it
+  if (lp.endsWith(ln)) return prev;
+  // If prev is fully contained at start of next, replace prev tail
+  if (ln.startsWith(lp)) return next;
+  // Find longest suffix of prev that is a prefix of next
+  const maxOverlap = Math.min(prev.length, next.length);
+  for (let len = maxOverlap; len > 4; len--) {  // require ≥5 char overlap to avoid false matches
+    if (lp.slice(-len) === ln.slice(0, len)) {
+      return prev + next.slice(len);
+    }
+  }
+  return prev + ' ' + next;
+}
 
 const VOICE_NAMES = [
   { key:'Sandra',  patterns:['sandra'] },
@@ -4927,6 +4952,7 @@ function openVoiceModal() {
     return;
   }
   voiceState.finalText = '';
+  voiceState.sessionText = '';
   voiceState.interimText = '';
   voiceState.parsed = null;
   document.getElementById('voice-transcript').textContent = 'Hier erscheint dein gesprochener Text...';
@@ -4984,18 +5010,20 @@ function buildRecognizer() {
   };
 
   rec.onresult = (ev) => {
-    // BULLETPROOF: only look at the LAST result entry in this session.
-    // In single-shot mode each session has 1 final result preceded by interim
-    // results that all describe the same utterance. Taking only the last
-    // entry sidesteps every Android-Chrome quirk around duplicate entries.
+    // BULLETPROOF: only look at the LAST result entry in this session AND
+    // REPLACE sessionText instead of appending. Android Chrome fires multiple
+    // onresult events per session — interim text grows, then becomes final,
+    // then sometimes additional final events arrive that contain a SUPERSET
+    // of the previous final text. By always overwriting sessionText with the
+    // newest value, we never end up with "im im Bad im Bad oben…" duplicates.
     const last = ev.results[ev.results.length - 1];
     if (!last || !last[0]) return;
-    const txt = last[0].transcript;
+    const txt = (last[0].transcript || '').trim();
     if (last.isFinal) {
-      voiceState.finalText = (voiceState.finalText.trim() + ' ' + txt.trim()).trim() + ' ';
+      voiceState.sessionText = txt;       // REPLACE
       voiceState.interimText = '';
     } else {
-      voiceState.interimText = txt;
+      voiceState.interimText = txt;       // REPLACE
     }
     renderVoiceTranscript();
   };
@@ -5019,16 +5047,10 @@ function buildRecognizer() {
   };
 
   rec.onend = () => {
-    // Auto-restart for continuous-like behaviour, unless user tapped Stop
+    // Commit this session's text (sessionText OR fallback to interim) into
+    // the global finalText, using smartAppend to drop overlapping prefixes.
+    commitSession();
     if (voiceState.recording && !voiceState.userStopped) {
-      // Promote interim to final between sessions (in case the session ended
-      // without an isFinal result)
-      const interim = voiceState.interimText.trim();
-      if (interim) {
-        voiceState.finalText = (voiceState.finalText.trim() + ' ' + interim).trim() + ' ';
-        voiceState.interimText = '';
-        renderVoiceTranscript();
-      }
       // Small delay so Chrome can release the audio stream cleanly before next start()
       voiceState.restartTimer = setTimeout(() => {
         if (voiceState.recording && !voiceState.userStopped) {
@@ -5070,6 +5092,18 @@ function stopVoiceRecording() {
   finalizeVoiceRecording();
 }
 
+// Move sessionText (or, as fallback, interimText) into finalText with
+// smart overlap merging, then clear them. Called between sessions
+// (auto-restart) and at the very end (stop).
+function commitSession() {
+  const piece = (voiceState.sessionText || voiceState.interimText || '').trim();
+  if (piece) {
+    voiceState.finalText = smartAppend(voiceState.finalText, piece);
+  }
+  voiceState.sessionText = '';
+  voiceState.interimText = '';
+}
+
 function finalizeVoiceRecording() {
   if (!voiceState.recording && !voiceState.rec) return;
   voiceState.recording = false;
@@ -5086,13 +5120,8 @@ function finalizeVoiceRecording() {
   }
   document.getElementById('voice-mic-btn').classList.remove('recording');
   document.getElementById('voice-mic-btn').textContent = '🎤';
-  // Promote any remaining interim text to final (only once)
-  const interim = voiceState.interimText.trim();
-  if (interim && !voiceState.finalText.toLowerCase().trim().endsWith(interim.toLowerCase())) {
-    voiceState.finalText = (voiceState.finalText.trim() + ' ' + interim).trim() + ' ';
-  }
-  voiceState.interimText = '';
-  // Collapse accidental double spaces
+  // Final commit of any remaining session/interim text
+  commitSession();
   voiceState.finalText = voiceState.finalText.replace(/\s+/g,' ').trim();
   renderVoiceTranscript();
   if (voiceState.finalText) {
@@ -5115,13 +5144,20 @@ function updateVoiceTimer() {
 function renderVoiceTranscript() {
   const el = document.getElementById('voice-transcript');
   const f = voiceState.finalText.trim();
+  // Live preview: combine committed final + current session's final + interim
+  // using smartAppend so overlapping prefixes don't show as duplicates.
+  let live = f;
+  const s = voiceState.sessionText.trim();
   const i = voiceState.interimText.trim();
-  if (!f && !i) {
+  if (s) live = smartAppend(live, s);
+  // interim is shown italicised separately so the user sees what's "in flight"
+  const interimDisp = i && (!s || i !== s) ? i : '';
+  if (!live && !interimDisp) {
     el.textContent = 'Hier erscheint dein gesprochener Text...';
     el.classList.add('empty');
   } else {
     el.classList.remove('empty');
-    el.innerHTML = esc(f) + (i ? ' <span class="interim">' + esc(i) + '</span>' : '');
+    el.innerHTML = esc(live) + (interimDisp ? ' <span class="interim">' + esc(interimDisp) + '</span>' : '');
     el.scrollTop = el.scrollHeight;
   }
 }
@@ -5129,6 +5165,7 @@ function renderVoiceTranscript() {
 function clearVoiceTranscript() {
   if (voiceState.recording) stopVoiceRecording();
   voiceState.finalText = '';
+  voiceState.sessionText = '';
   voiceState.interimText = '';
   voiceState.parsed = null;
   voiceState.userStopped = false;
