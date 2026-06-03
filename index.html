@@ -193,8 +193,11 @@
   .photo-full-counter { position:absolute; top:18px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.55); color:white; padding:6px 16px; border-radius:20px; font-size:0.9rem; font-weight:600; z-index:2001; display:none; pointer-events:none; }
   .photo-full-close { position:absolute; top:14px; right:18px; background:rgba(0,0,0,0.55); color:white; border:none; width:40px; height:40px; border-radius:50%; font-size:24px; line-height:1; cursor:pointer; z-index:2001; display:flex; align-items:center; justify-content:center; padding:0; }
   .photo-full-close:hover { background:rgba(0,0,0,0.8); }
+  .photo-full-dl { position:absolute; top:14px; right:68px; background:rgba(0,0,0,0.55); color:white; border:none; width:40px; height:40px; border-radius:50%; font-size:20px; line-height:1; cursor:pointer; z-index:2001; display:none; align-items:center; justify-content:center; padding:0; }
+  .photo-full-dl:hover { background:rgba(0,0,0,0.8); }
   .photo-full-overlay.album-mode .photo-full-nav,
-  .photo-full-overlay.album-mode .photo-full-counter { display:flex; }
+  .photo-full-overlay.album-mode .photo-full-counter,
+  .photo-full-overlay.album-mode .photo-full-dl { display:flex; }
   @media (max-width:520px) { .photo-full-nav { width:44px; height:44px; font-size:26px; } .photo-full-nav.prev { left:8px; } .photo-full-nav.next { right:8px; } }
 
   /* LOGIN */
@@ -587,6 +590,7 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
   <div class="album-delete-bar" id="album-delete-bar">
     <span id="album-del-count" style="font-weight:600;color:var(--danger);min-width:100px">0 ausgewählt</span>
     <button class="btn btn-ghost btn-sm" id="album-sel-all-btn" onclick="selectAllAlbum()">Alle markieren</button>
+    <button class="btn btn-primary btn-sm" id="album-dl-selected-btn" onclick="downloadSelectedAlbum()" disabled>💾 Download (0)</button>
     <button class="btn btn-danger btn-sm" id="album-del-selected-btn" onclick="deleteSelectedAlbum()" disabled>🗑️ Löschen (0)</button>
     <button class="btn btn-ghost btn-sm" onclick="toggleAlbumDeleteMode()">✕ Abbrechen</button>
   </div>
@@ -701,6 +705,7 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
 
 <div class="photo-full-overlay" id="photo-full" onclick="closeFullPhoto(event)">
   <button class="photo-full-close" onclick="event.stopPropagation();closeFullPhoto()" title="Schließen (Esc)">×</button>
+  <button class="photo-full-dl" id="photo-full-dl" onclick="event.stopPropagation();downloadCurrentPhoto()" title="Dieses Foto herunterladen">⬇</button>
   <button class="photo-full-nav prev" id="photo-full-prev" onclick="event.stopPropagation();navigatePhoto(-1)" aria-label="Vorheriges Foto">‹</button>
   <img id="photo-full-img" src="" onclick="event.stopPropagation()">
   <button class="photo-full-nav next" id="photo-full-next" onclick="event.stopPropagation();navigatePhoto(1)" aria-label="Nächstes Foto">›</button>
@@ -3581,8 +3586,65 @@ function updateAlbumDeleteBar() {
   if (countEl) countEl.textContent = t('albumSelCount', n);
   const delBtn = document.getElementById('album-del-selected-btn');
   if (delBtn) { delBtn.textContent = t('albumDeleteSelected', n); delBtn.disabled = n === 0; }
+  const dlBtn = document.getElementById('album-dl-selected-btn');
+  if (dlBtn) { dlBtn.textContent = '💾 Download (' + n + ')'; dlBtn.disabled = n === 0; }
   const selAllBtn = document.getElementById('album-sel-all-btn');
   if (selAllBtn) selAllBtn.textContent = albumSelected.size === allAlbumPhotos.length ? t('albumDeselectAll') : t('albumSelectAll');
+}
+
+/** Build a sensible filename from the photo's capture date. */
+function albumPhotoFilename(ph) {
+  const d = new Date(ph.aufgenommen_am);
+  if (isNaN(d.getTime())) return 'Foto_' + (ph.id || 'unbekannt').slice(0,8) + '.jpg';
+  const pad = n => String(n).padStart(2,'0');
+  return `Foto_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}.jpg`;
+}
+
+/** Trigger a browser download for a base64 data URL. */
+function triggerDownload(dataUrl, filename) {
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { try { document.body.removeChild(a); } catch {} }, 100);
+}
+
+/** Download all currently-selected album photos. */
+async function downloadSelectedAlbum() {
+  const ids = [...albumSelected];
+  if (!ids.length) return;
+  // Preserve display order (newest first, like the grid)
+  const ordered = allAlbumPhotos.filter(p => albumSelected.has(p.id));
+  if (ordered.length > 1) {
+    const ok = confirm(`${ordered.length} Fotos herunterladen?\n\nDein Browser fragt evtl. ob er mehrere Downloads erlauben darf — bitte mit "Erlauben" / "Zulassen" bestätigen.`);
+    if (!ok) return;
+  }
+  let failed = 0;
+  for (let i = 0; i < ordered.length; i++) {
+    const ph = ordered[i];
+    showLoading(`Lade Foto ${i+1} / ${ordered.length}...`);
+    let b64;
+    try { b64 = await ensureAlbumPhotoLoaded(ph.id); }
+    catch(e) { console.warn('download fetch failed', ph.id, e); }
+    if (!b64) { failed++; continue; }
+    triggerDownload(b64, albumPhotoFilename(ph));
+    // Tiny gap between downloads — many browsers throttle/block bunched-up triggers
+    if (i < ordered.length - 1) await new Promise(r => setTimeout(r, 350));
+  }
+  hideLoading();
+  if (failed) alert(`⚠️ ${failed} von ${ordered.length} Foto${failed!==1?'s':''} konnten nicht geladen werden.`);
+}
+
+/** Download the photo currently shown in the full-screen overlay. */
+async function downloadCurrentPhoto() {
+  if (currentPhotoIndex < 0) return;
+  const ph = allAlbumPhotos[currentPhotoIndex];
+  if (!ph) return;
+  const b64 = albumBase64Cache.get(ph.id) || await ensureAlbumPhotoLoaded(ph.id);
+  if (!b64) { alert('Foto konnte nicht geladen werden.'); return; }
+  triggerDownload(b64, albumPhotoFilename(ph));
 }
 
 async function deleteSelectedAlbum() {
