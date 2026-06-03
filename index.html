@@ -530,6 +530,7 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
         <option value="Detlef">Detlef</option>
         <option value="Rainer">Rainer</option>
         <option value="Heike">Heike</option>
+        <option value="Jörn">Jörn</option>
       </select>
     </div>
     <div class="form-group"><label>Beschreibung</label><textarea id="f-beschreibung" placeholder="Detaillierte Beschreibung..."></textarea></div>
@@ -1594,7 +1595,7 @@ async function deletePunkt(id) {
 
 // ===================== FORM =====================
 // Helpers for the 3-category system (critical / noncritical / todo)
-const TODO_ASSIGNEES = ['Sandra','Steffen','Monika','Detlef','Rainer','Heike'];
+const TODO_ASSIGNEES = ['Sandra','Steffen','Monika','Detlef','Rainer','Heike','Jörn'];
 function catLabel(k) {
   if (k === 'critical') return t('catCritical');
   if (k === 'todo')     return t('catTodo');
@@ -1704,7 +1705,7 @@ async function savePunkt() {
     if (kategorie === 'todo') {
       if (!zustaendig || !TODO_ASSIGNEES.includes(zustaendig)) {
         hideLoading(); btn.disabled=false;
-        alert('Bei Kategorie "To-Do" muss ein Zuständiger gewählt werden (Sandra, Steffen, Monika, Detlef, Rainer oder Heike).');
+        alert('Bei Kategorie "To-Do" muss ein Zuständiger gewählt werden (Sandra, Steffen, Monika, Detlef, Rainer, Heike oder Jörn).');
         return;
       }
     }
