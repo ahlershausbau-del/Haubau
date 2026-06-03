@@ -577,6 +577,7 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
     <h1 id="album-title">📷 Fotoalbum</h1>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <span id="album-count" style="color:var(--muted);font-size:0.9rem"></span>
+      <button id="album-download-btn" class="btn btn-ghost" onclick="toggleAlbumDownloadMode()">📥 Download</button>
       <button id="album-select-btn" class="btn btn-ghost" onclick="toggleAlbumDeleteMode()">🗑️ Auswählen</button>
       <button id="album-camera-btn" class="btn btn-ghost" onclick="document.getElementById('album-camera-input').click()">📷 Kamera</button>
       <button id="album-upload-btn" class="btn btn-primary" onclick="document.getElementById('album-file-input').click()">📤 Fotos hochladen</button>
@@ -1201,8 +1202,7 @@ function applyLang() {
   const expBtn = document.querySelector('[data-exp-btn]');
   if (expBtn) expBtn.textContent = t('expDownload');
   // Album
-  const albumSelBtn = document.getElementById('album-select-btn');
-  if (albumSelBtn) albumSelBtn.textContent = albumDeleteMode ? t('albumCancelSelect') : t('albumStartSelect');
+  if (typeof updateAlbumModeButtons === 'function') updateAlbumModeButtons();
   const albumCamBtn = document.getElementById('album-camera-btn');
   if (albumCamBtn) albumCamBtn.textContent = t('albumCameraBtn');
   const albumUpBtn = document.getElementById('album-upload-btn');
@@ -3499,8 +3499,12 @@ async function deleteAlbumPhoto(id) {
   renderAlbum();
 }
 
-// ---- select-mode / multi-delete ----
-let albumDeleteMode = false;
+// ---- select-mode / multi-action ----
+// One mechanism, two intents: clicking the trash button enters mode with intent='delete',
+// the download button enters with intent='download'. The action bar shows only the
+// matching action so the user can't accidentally hit the wrong one.
+let albumDeleteMode = false;            // kept name for compat: true = ANY select mode active
+let albumSelectIntent = 'delete';       // 'delete' | 'download'
 let albumSelected = new Set();
 
 function albumPhotoClick(id, el) {
@@ -3511,22 +3515,37 @@ function albumPhotoClick(id, el) {
   }
 }
 
-function toggleAlbumDeleteMode() {
-  albumDeleteMode = !albumDeleteMode;
-  albumSelected.clear();
-  // toggle upload zone, camera & upload buttons
+function toggleAlbumDeleteMode()   { toggleAlbumSelectMode('delete'); }
+function toggleAlbumDownloadMode() { toggleAlbumSelectMode('download'); }
+
+function toggleAlbumSelectMode(intent) {
+  // If already in this same mode → exit. If in the OTHER mode → switch intent (keep selection).
+  // If not in mode → enter with this intent.
+  if (albumDeleteMode && albumSelectIntent === intent) {
+    albumDeleteMode = false;
+    albumSelected.clear();
+  } else if (albumDeleteMode && albumSelectIntent !== intent) {
+    albumSelectIntent = intent;
+    updateAlbumDeleteBar();
+    updateAlbumModeButtons();
+    return;
+  } else {
+    albumDeleteMode = true;
+    albumSelectIntent = intent;
+    albumSelected.clear();
+  }
+  // Show/hide non-select-mode controls (upload zone & buttons)
   const zone = document.getElementById('album-upload-zone');
   const upBtn = document.getElementById('album-upload-btn');
   const camBtn = document.getElementById('album-camera-btn');
   if (zone) zone.style.display = albumDeleteMode ? 'none' : '';
   if (upBtn) upBtn.style.display = albumDeleteMode ? 'none' : '';
   if (camBtn) camBtn.style.display = albumDeleteMode ? 'none' : '';
-  // toggle select-mode class on grid
+  // Grid select-mode class + clear lingering selections
   const content = document.getElementById('album-content');
   if (content) {
     if (albumDeleteMode) content.classList.add('select-mode');
     else content.classList.remove('select-mode');
-    // clear any lingering selected classes
     content.querySelectorAll('.album-photo.selected').forEach(el => {
       el.classList.remove('selected');
       const chk = el.querySelector('.album-select-check');
@@ -3534,9 +3553,15 @@ function toggleAlbumDeleteMode() {
     });
   }
   updateAlbumDeleteBar();
-  // update the "Auswählen" button text
+  updateAlbumModeButtons();
+}
+
+function updateAlbumModeButtons() {
+  // Header buttons: show "Cancel" label on whichever one is the active mode, plain label otherwise
   const selBtn = document.getElementById('album-select-btn');
-  if (selBtn) selBtn.textContent = albumDeleteMode ? t('albumCancelSelect') : t('albumStartSelect');
+  const dlBtn  = document.getElementById('album-download-btn');
+  if (selBtn) selBtn.textContent = (albumDeleteMode && albumSelectIntent === 'delete') ? t('albumCancelSelect') : t('albumStartSelect');
+  if (dlBtn)  dlBtn.textContent  = (albumDeleteMode && albumSelectIntent === 'download') ? '✕ Abbrechen' : '📥 Download';
 }
 
 function toggleAlbumSelect(id, el) {
@@ -3584,10 +3609,19 @@ function updateAlbumDeleteBar() {
   const n = albumSelected.size;
   const countEl = document.getElementById('album-del-count');
   if (countEl) countEl.textContent = t('albumSelCount', n);
+  // Show only the action that matches the current intent
   const delBtn = document.getElementById('album-del-selected-btn');
-  if (delBtn) { delBtn.textContent = t('albumDeleteSelected', n); delBtn.disabled = n === 0; }
+  if (delBtn) {
+    delBtn.style.display = albumSelectIntent === 'delete' ? '' : 'none';
+    delBtn.textContent = t('albumDeleteSelected', n);
+    delBtn.disabled = n === 0;
+  }
   const dlBtn = document.getElementById('album-dl-selected-btn');
-  if (dlBtn) { dlBtn.textContent = '💾 Download (' + n + ')'; dlBtn.disabled = n === 0; }
+  if (dlBtn) {
+    dlBtn.style.display = albumSelectIntent === 'download' ? '' : 'none';
+    dlBtn.textContent = '💾 Download (' + n + ')';
+    dlBtn.disabled = n === 0;
+  }
   const selAllBtn = document.getElementById('album-sel-all-btn');
   if (selAllBtn) selAllBtn.textContent = albumSelected.size === allAlbumPhotos.length ? t('albumDeselectAll') : t('albumSelectAll');
 }
@@ -3635,6 +3669,10 @@ async function downloadSelectedAlbum() {
   }
   hideLoading();
   if (failed) alert(`⚠️ ${failed} von ${ordered.length} Foto${failed!==1?'s':''} konnten nicht geladen werden.`);
+  // Leave select mode after a successful (or partly-successful) batch download
+  if (albumDeleteMode && albumSelectIntent === 'download') {
+    toggleAlbumSelectMode('download'); // toggles off
+  }
 }
 
 /** Download the photo currently shown in the full-screen overlay. */
@@ -3662,9 +3700,7 @@ async function deleteSelectedAlbum() {
   hideLoading();
   renderAlbum();
   updateAlbumDeleteBar();
-  // Reset button text
-  const selBtn = document.getElementById('album-select-btn');
-  if (selBtn) selBtn.textContent = t('albumStartSelect');
+  updateAlbumModeButtons();
   const upBtn = document.getElementById('album-upload-btn');
   if (upBtn) upBtn.style.display = '';
   const camBtn = document.getElementById('album-camera-btn');
