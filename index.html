@@ -4895,11 +4895,13 @@ attachPhotoEditorHandlers();
 const voiceState = {
   rec: null,
   recording: false,
+  userStopped: false,
   finalText: '',
   interimText: '',
   startTs: 0,
   timerId: null,
   parsed: null,
+  restartTimer: null,
   supported: ('SpeechRecognition' in window) || ('webkitSpeechRecognition' in window)
 };
 
@@ -4958,73 +4960,113 @@ function toggleVoiceRecording() {
   else startVoiceRecording();
 }
 
-function startVoiceRecording() {
-  hideVoiceError();
+function buildRecognizer() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const rec = new SR();
   rec.lang = 'de-DE';
-  rec.continuous = true;
+  // SINGLE-SHOT mode: works reliably on Android Chrome (Honor, Samsung, Pixel),
+  // iOS Safari and Desktop. The "continuous: true" mode is buggy on Android —
+  // it re-emits the same interim transcript in multiple results[] entries,
+  // which produced the "Wort1 Wort1 Wort1 Wort2 Wort1 Wort2..." duplicates.
+  // We simulate continuous behaviour by auto-restarting in onend.
+  rec.continuous = false;
   rec.interimResults = true;
   rec.maxAlternatives = 1;
 
   rec.onstart = () => {
+    if (!voiceState.startTs) voiceState.startTs = Date.now();
     voiceState.recording = true;
-    voiceState.startTs = Date.now();
     document.getElementById('voice-mic-btn').classList.add('recording');
     document.getElementById('voice-mic-btn').textContent = '⏹';
     document.getElementById('voice-status').textContent = '🔴 Aufnahme läuft — tippen zum Stoppen';
     document.getElementById('voice-timer').style.display = '';
-    voiceState.timerId = setInterval(updateVoiceTimer, 250);
+    if (!voiceState.timerId) voiceState.timerId = setInterval(updateVoiceTimer, 250);
   };
 
   rec.onresult = (ev) => {
-    // IMPORTANT: rebuild the full transcript from scratch on each event.
-    // Some browsers (esp. Android Chrome) re-fire results with stable indices
-    // and inconsistent resultIndex, so accumulating with += causes duplicates.
-    let final = '';
-    let interim = '';
-    for (let i = 0; i < ev.results.length; i++) {
-      const r = ev.results[i];
-      const txt = r[0] ? r[0].transcript : '';
-      if (r.isFinal) final += txt + ' ';
-      else            interim += txt;
+    // BULLETPROOF: only look at the LAST result entry in this session.
+    // In single-shot mode each session has 1 final result preceded by interim
+    // results that all describe the same utterance. Taking only the last
+    // entry sidesteps every Android-Chrome quirk around duplicate entries.
+    const last = ev.results[ev.results.length - 1];
+    if (!last || !last[0]) return;
+    const txt = last[0].transcript;
+    if (last.isFinal) {
+      voiceState.finalText = (voiceState.finalText.trim() + ' ' + txt.trim()).trim() + ' ';
+      voiceState.interimText = '';
+    } else {
+      voiceState.interimText = txt;
     }
-    voiceState.finalText = final;
-    voiceState.interimText = interim;
     renderVoiceTranscript();
   };
 
   rec.onerror = (ev) => {
     console.warn('SpeechRecognition error:', ev.error);
-    if (ev.error === 'no-speech') return; // ignore
+    if (ev.error === 'no-speech' || ev.error === 'aborted') return; // benign — onend will restart
     if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
       showVoiceError('Mikrofon-Zugriff wurde verweigert. Bitte in den Browser-Einstellungen erlauben.');
+      voiceState.userStopped = true;
     } else if (ev.error === 'audio-capture') {
       showVoiceError('Kein Mikrofon gefunden.');
+      voiceState.userStopped = true;
     } else if (ev.error === 'network') {
       showVoiceError('Netzwerkfehler — Spracherkennung benötigt Internet.');
+      voiceState.userStopped = true;
     } else {
       showVoiceError('Spracherkennungsfehler: ' + ev.error);
+      voiceState.userStopped = true;
     }
-    stopVoiceRecording();
   };
 
   rec.onend = () => {
-    if (voiceState.recording) {
-      // unexpected end while still recording -> finalize
+    // Auto-restart for continuous-like behaviour, unless user tapped Stop
+    if (voiceState.recording && !voiceState.userStopped) {
+      // Promote interim to final between sessions (in case the session ended
+      // without an isFinal result)
+      const interim = voiceState.interimText.trim();
+      if (interim) {
+        voiceState.finalText = (voiceState.finalText.trim() + ' ' + interim).trim() + ' ';
+        voiceState.interimText = '';
+        renderVoiceTranscript();
+      }
+      // Small delay so Chrome can release the audio stream cleanly before next start()
+      voiceState.restartTimer = setTimeout(() => {
+        if (voiceState.recording && !voiceState.userStopped) {
+          try { voiceState.rec.start(); }
+          catch(e) {
+            console.warn('Auto-restart failed:', e);
+            finalizeVoiceRecording();
+          }
+        }
+      }, 120);
+    } else {
       finalizeVoiceRecording();
     }
   };
+  return rec;
+}
 
-  voiceState.rec = rec;
-  try { rec.start(); }
-  catch(e) { showVoiceError('Konnte Aufnahme nicht starten: ' + e.message); }
+function startVoiceRecording() {
+  hideVoiceError();
+  voiceState.userStopped = false;
+  voiceState.startTs = 0;
+  try {
+    voiceState.rec = buildRecognizer();
+    voiceState.rec.start();
+  } catch(e) {
+    showVoiceError('Konnte Aufnahme nicht starten: ' + e.message);
+  }
 }
 
 function stopVoiceRecording() {
+  // CRITICAL: set userStopped FIRST so onend doesn't auto-restart
+  voiceState.userStopped = true;
+  if (voiceState.restartTimer) { clearTimeout(voiceState.restartTimer); voiceState.restartTimer = null; }
   if (voiceState.rec) {
     try { voiceState.rec.stop(); } catch(e){}
   }
+  // onend will fire and call finalizeVoiceRecording(); call it directly as
+  // a safety net in case onend has already detached.
   finalizeVoiceRecording();
 }
 
@@ -5032,11 +5074,14 @@ function finalizeVoiceRecording() {
   if (!voiceState.recording && !voiceState.rec) return;
   voiceState.recording = false;
   if (voiceState.timerId) { clearInterval(voiceState.timerId); voiceState.timerId = null; }
+  if (voiceState.restartTimer) { clearTimeout(voiceState.restartTimer); voiceState.restartTimer = null; }
   // Detach listeners so any late event after stop() can't overwrite the transcript
   if (voiceState.rec) {
     voiceState.rec.onresult = null;
     voiceState.rec.onerror = null;
     voiceState.rec.onend = null;
+    voiceState.rec.onstart = null;
+    try { voiceState.rec.abort(); } catch(e){}
     voiceState.rec = null;
   }
   document.getElementById('voice-mic-btn').classList.remove('recording');
@@ -5086,6 +5131,8 @@ function clearVoiceTranscript() {
   voiceState.finalText = '';
   voiceState.interimText = '';
   voiceState.parsed = null;
+  voiceState.userStopped = false;
+  voiceState.startTs = 0;
   renderVoiceTranscript();
   document.getElementById('voice-detected').classList.add('empty');
   document.getElementById('voice-detected-rows').innerHTML = '';
