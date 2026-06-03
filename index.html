@@ -580,11 +580,19 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
 <div id="view-neu" class="view">
   <div class="card-header" style="margin-bottom:16px">
     <h1 id="form-title">Neuer Nacharbeitspunkt</h1>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <button class="voice-trigger-btn" id="voice-trigger-btn" onclick="openVoiceModal()" title="Per Sprache anlegen">🎤 Sprach-Punkt</button>
-      <button class="btn btn-ghost" onclick="cancelEdit()">✕ Abbrechen</button>
-    </div>
+    <button class="btn btn-ghost" onclick="cancelEdit()">✕ Abbrechen</button>
   </div>
+
+  <!-- Sprach-Schnellanlage Banner -->
+  <div id="voice-banner" style="background:linear-gradient(135deg,#1e293b 0%,#0f172a 100%);color:white;border-radius:12px;padding:14px 16px;margin-bottom:16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,0.15)">
+    <div style="font-size:2rem;line-height:1">🎤</div>
+    <div style="flex:1;min-width:180px">
+      <div style="font-weight:600;font-size:0.98rem;margin-bottom:2px">Schneller anlegen per Sprache</div>
+      <div style="font-size:0.8rem;color:#cbd5e1;line-height:1.4">Diktiere Titel, Kategorie, Zuständigen und Fälligkeit in einem Satz.</div>
+    </div>
+    <button class="voice-trigger-btn" id="voice-trigger-btn" onclick="openVoiceModal()" title="Per Sprache anlegen" style="flex-shrink:0">🎤 Diktieren starten</button>
+  </div>
+
   <div class="card">
     <div class="grid-2">
       <div class="form-group"><label>Titel *</label><input id="f-titel" type="text" placeholder="z.B. Riss in Außenwand"></div>
@@ -4970,12 +4978,18 @@ function startVoiceRecording() {
   };
 
   rec.onresult = (ev) => {
+    // IMPORTANT: rebuild the full transcript from scratch on each event.
+    // Some browsers (esp. Android Chrome) re-fire results with stable indices
+    // and inconsistent resultIndex, so accumulating with += causes duplicates.
+    let final = '';
     let interim = '';
-    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+    for (let i = 0; i < ev.results.length; i++) {
       const r = ev.results[i];
-      if (r.isFinal) voiceState.finalText += r[0].transcript + ' ';
-      else interim += r[0].transcript;
+      const txt = r[0] ? r[0].transcript : '';
+      if (r.isFinal) final += txt + ' ';
+      else            interim += txt;
     }
+    voiceState.finalText = final;
     voiceState.interimText = interim;
     renderVoiceTranscript();
   };
@@ -5015,22 +5029,34 @@ function stopVoiceRecording() {
 }
 
 function finalizeVoiceRecording() {
+  if (!voiceState.recording && !voiceState.rec) return;
   voiceState.recording = false;
   if (voiceState.timerId) { clearInterval(voiceState.timerId); voiceState.timerId = null; }
+  // Detach listeners so any late event after stop() can't overwrite the transcript
+  if (voiceState.rec) {
+    voiceState.rec.onresult = null;
+    voiceState.rec.onerror = null;
+    voiceState.rec.onend = null;
+    voiceState.rec = null;
+  }
   document.getElementById('voice-mic-btn').classList.remove('recording');
   document.getElementById('voice-mic-btn').textContent = '🎤';
-  document.getElementById('voice-status').textContent = voiceState.finalText.trim() ? 'Fertig — Erkennung läuft...' : 'Nichts erkannt — nochmal versuchen';
-  // merge interim into final
-  if (voiceState.interimText.trim()) {
-    voiceState.finalText += voiceState.interimText + ' ';
-    voiceState.interimText = '';
+  // Promote any remaining interim text to final (only once)
+  const interim = voiceState.interimText.trim();
+  if (interim && !voiceState.finalText.toLowerCase().trim().endsWith(interim.toLowerCase())) {
+    voiceState.finalText = (voiceState.finalText.trim() + ' ' + interim).trim() + ' ';
   }
+  voiceState.interimText = '';
+  // Collapse accidental double spaces
+  voiceState.finalText = voiceState.finalText.replace(/\s+/g,' ').trim();
   renderVoiceTranscript();
-  if (voiceState.finalText.trim()) {
-    voiceState.parsed = parseVoiceInput(voiceState.finalText.trim());
+  if (voiceState.finalText) {
+    voiceState.parsed = parseVoiceInput(voiceState.finalText);
     renderVoiceDetected(voiceState.parsed);
     document.getElementById('voice-apply-btn').disabled = false;
     document.getElementById('voice-status').textContent = '✓ Erkannt — bitte prüfen & übernehmen';
+  } else {
+    document.getElementById('voice-status').textContent = 'Nichts erkannt — bitte nochmal versuchen';
   }
 }
 
