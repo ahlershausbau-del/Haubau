@@ -791,7 +791,7 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script>
 // ===================== SUPABASE CONFIG (fest eingebaut) =====================
 const SUPABASE_URL = 'https://knwlvsndlhlxozyqmvoe.supabase.co';
@@ -4049,6 +4049,74 @@ function wrapTextLines(ctx, text, maxWidth) {
   return lines;
 }
 
+/** Draws a QR code with the given text into a square area on the canvas.
+ *  Uses qrcode-generator (window.qrcode) — a tiny, battle-tested library.
+ *  If the library failed to load, draws a clear error box + writes the URL underneath.
+ */
+function drawQRToCanvas(ctx, text, x, y, size) {
+  // 1. White background under the QR area
+  ctx.save();
+  ctx.fillStyle = 'white';
+  ctx.fillRect(x, y, size, size);
+
+  // 2. Defensive check that the lib loaded
+  if (typeof qrcode !== 'function') {
+    console.error('QR-Bibliothek nicht geladen — window.qrcode ist undefined');
+    ctx.fillStyle = '#fee';
+    ctx.fillRect(x, y, size, size);
+    ctx.strokeStyle = '#c00';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, size, size);
+    ctx.fillStyle = '#c00';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textBaseline = 'top';
+    ctx.fillText('QR-Lib', x + 8, y + 8);
+    ctx.fillText('nicht', x + 8, y + 26);
+    ctx.fillText('geladen', x + 8, y + 44);
+    ctx.restore();
+    return false;
+  }
+
+  // 3. Generate QR matrix and draw it module-by-module
+  try {
+    // type 0 = automatisch kleinste Version waehlen, 'M' = mittlere Fehlerkorrektur
+    const qr = qrcode(0, 'M');
+    qr.addData(text);
+    qr.make();
+    const mods = qr.getModuleCount();
+    const cell = Math.max(1, Math.floor(size / mods));
+    const actualSize = cell * mods;
+    const offX = x + Math.floor((size - actualSize) / 2);
+    const offY = y + Math.floor((size - actualSize) / 2);
+    ctx.fillStyle = 'black';
+    for (let row = 0; row < mods; row++) {
+      for (let col = 0; col < mods; col++) {
+        if (qr.isDark(row, col)) {
+          ctx.fillRect(offX + col * cell, offY + row * cell, cell, cell);
+        }
+      }
+    }
+    ctx.restore();
+    return true;
+  } catch (e) {
+    console.error('QR generation failed:', e);
+    ctx.fillStyle = '#fee';
+    ctx.fillRect(x, y, size, size);
+    ctx.strokeStyle = '#c00';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, size, size);
+    ctx.fillStyle = '#c00';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textBaseline = 'top';
+    ctx.fillText('QR-Fehler', x + 8, y + 8);
+    ctx.font = '10px sans-serif';
+    const errMsg = (e.message || String(e)).slice(0, 40);
+    ctx.fillText(errMsg, x + 8, y + 26);
+    ctx.restore();
+    return false;
+  }
+}
+
 /** Renders a NIIMBOT B1 label canvas (400x240 px, 50x30 mm @ 203 DPI).
  *  Layout: Left = #Nr (big) + Kategorie + Titel (2 lines) + Beschreibung (3 lines)
  *          Right = QR with deep link to the point's public preview
@@ -4066,25 +4134,11 @@ async function buildLabelCanvas(p) {
   // mm-to-px helper for this label
   const px = mm => Math.round(mm * LABEL_DPI / 25.4);
 
-  // QR — kleiner als vorher (20 statt 22 mm) damit Beschreibung Platz bekommt
+  // QR (20 mm) — direkt aufs Canvas zeichnen via qrcode-generator (window.qrcode)
   const qrSize = px(20);
   const qrX = LABEL_W_PX - qrSize - px(2);
   const qrY = Math.round((LABEL_H_PX - qrSize) / 2);
-  try {
-    const qrCanvas = document.createElement('canvas');
-    await QRCode.toCanvas(qrCanvas, punktDeepLink(p.id), {
-      width: qrSize,
-      margin: 0,
-      errorCorrectionLevel: 'M',
-      color: { dark: '#000000ff', light: '#ffffffff' }
-    });
-    ctx.drawImage(qrCanvas, qrX, qrY);
-  } catch (e) {
-    console.warn('QR generation failed:', e);
-    ctx.strokeRect(qrX, qrY, qrSize, qrSize);
-    ctx.font = '14px sans-serif';
-    ctx.fillText('QR?', qrX + qrSize/2 - 14, qrY + qrSize/2 - 7);
-  }
+  drawQRToCanvas(ctx, punktDeepLink(p.id), qrX, qrY, qrSize);
 
   // Text area links — neue mehr Platz (24 mm breit)
   const textX = px(2);
