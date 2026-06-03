@@ -4944,6 +4944,51 @@ const VOICE_CRITICAL_WORDS = ['kritisch','kritikal','eilig','dringend','sofort',
 const VOICE_TODO_WORDS     = ['todo','to-do','to do','aufgabe','erledigen','kümmern','zuständig','soll machen','muss machen','besorgen','organisieren','planen'];
 const VOICE_NONCRIT_WORDS  = ['unwichtig','irgendwann','später','wenn zeit','gelegentlich','nebenbei','kleinigkeit','non-critical','noncritical','nicht eilig','keine eile'];
 
+// German function words / fillers to skip when extracting a concise title
+const VOICE_STOPWORDS = new Set([
+  // Articles
+  'der','die','das','den','dem','des','ein','eine','einen','einem','eines','einer',
+  // Prepositions (incl. contractions)
+  'im','in','an','am','auf','bei','beim','mit','zu','zum','zur','von','vom','für','über','unter','vor','hinter','neben','nach','durch','ohne','gegen','um','aus','ans','aufs',
+  // Pronouns / possessives
+  'ich','du','er','sie','es','wir','ihr','mein','dein','sein','unser','euer','mir','dir','ihm','ihnen','uns','euch',
+  // Conjunctions
+  'und','oder','aber','denn','weil','dass','ob','wenn','als','wie','so','also','sowie','sondern',
+  // Auxiliary / common verbs
+  'ist','sind','war','waren','wird','werden','hat','haben','hatte','hatten','kann','könnte','muss','müssen','soll','sollen','will','wollen','sei','seien','wäre','wurde','wurden','worden','geworden','tun','tut',
+  // Adverbs / fillers
+  'hier','dort','da','schon','noch','sehr','ganz','nur','auch','mal','eben','dann','jetzt','bereits','immer','nie','niemals','etwas','ein','paar','viele','vielleicht','eigentlich','quasi','halt',
+  // Date / time fillers (handled separately for dueDate)
+  'heute','morgen','übermorgen','gestern','bis','tag','tage','tagen','woche','wochen','monat','monate','monaten','nächste','nächsten','nächster','kommende','kommenden'
+]);
+
+// Extract a max-3-content-word title from the diktated text
+function extractConciseTitle(text) {
+  const tokens = text.split(/\s+/).map(w => w.replace(/[.,;:!?"„"'()]/g,'').trim()).filter(Boolean);
+  const namePatterns = new Set(VOICE_NAMES.flatMap(n => n.patterns));
+  const cueWords = new Set([...VOICE_CRITICAL_WORDS, ...VOICE_TODO_WORDS, ...VOICE_NONCRIT_WORDS]);
+  const out = [];
+  for (const raw of tokens) {
+    const lw = raw.toLowerCase();
+    if (!lw) continue;
+    if (VOICE_STOPWORDS.has(lw)) continue;
+    if (cueWords.has(lw)) continue;
+    if (namePatterns.has(lw)) continue;
+    if (/^\d+$/.test(lw)) continue; // bare numbers (likely from "in 3 Tagen")
+    out.push(raw);
+    if (out.length >= 3) break;
+  }
+  if (!out.length) {
+    // Fallback: first 3 tokens as-is
+    const f = tokens.slice(0,3);
+    if (!f.length) return '';
+    f[0] = f[0].charAt(0).toUpperCase() + f[0].slice(1);
+    return f.join(' ');
+  }
+  out[0] = out[0].charAt(0).toUpperCase() + out[0].slice(1);
+  return out.join(' ');
+}
+
 function openVoiceModal() {
   if (!voiceState.supported) {
     openModal('modal-voice');
@@ -5230,28 +5275,8 @@ function parseVoiceInput(text) {
   }
   out.dueDate = dueDate; out.dueLabel = dueLabel;
 
-  // Title: first sentence chunk, before any cue words like "kritisch", names, "bis", etc., max ~60 chars
-  let titleSrc = text;
-  // Cut at first sentence-ending punctuation
-  const cutMatch = titleSrc.match(/^[^.!?]+/);
-  if (cutMatch) titleSrc = cutMatch[0];
-  // Cut at "kommata + cue word"
-  const cueWords = [...VOICE_CRITICAL_WORDS, ...VOICE_NONCRIT_WORDS, ...VOICE_TODO_WORDS, 'bis ', 'für ', 'soll ', 'muss '];
-  for (const cw of cueWords) {
-    const idx = titleSrc.toLowerCase().indexOf(' ' + cw);
-    if (idx > 8 && idx < titleSrc.length) { titleSrc = titleSrc.slice(0, idx); }
-  }
-  titleSrc = titleSrc.replace(/[,;:].*$/,'').trim();
-  // Cap at ~60 chars on word boundary
-  if (titleSrc.length > 60) {
-    titleSrc = titleSrc.slice(0,60);
-    const sp = titleSrc.lastIndexOf(' ');
-    if (sp > 30) titleSrc = titleSrc.slice(0,sp);
-    titleSrc += '…';
-  }
-  // Capitalize first letter
-  if (titleSrc.length > 0) titleSrc = titleSrc.charAt(0).toUpperCase() + titleSrc.slice(1);
-  out.titel = titleSrc;
+  // Title: max 3 content words (stop words, cue words, names, dates filtered)
+  out.titel = extractConciseTitle(text);
 
   return out;
 }
