@@ -140,6 +140,34 @@
   .pe-toolbar-divider { width:1px; align-self:stretch; background:#333; }
   @media (max-width:600px) { .pe-tool-btn { font-size:0.78rem; padding:6px 9px; min-width:48px; } .pe-color-btn { width:26px; height:26px; } .pe-toolbar { padding:10px; gap:10px; } }
 
+  /* VOICE-PUNKT MODAL */
+  .voice-modal { max-width:560px !important; padding:0 !important; overflow:hidden; }
+  .voice-header { background:linear-gradient(135deg,#cc0000 0%,#7a0000 100%); color:white; padding:16px 20px; display:flex; align-items:center; justify-content:space-between; }
+  .voice-header h3 { color:white; font-size:1.05rem; margin:0; }
+  .voice-body { padding:20px; }
+  .voice-mic-wrap { display:flex; flex-direction:column; align-items:center; gap:12px; padding:12px 0 18px; }
+  .voice-mic-btn { width:120px; height:120px; border-radius:50%; border:none; background:linear-gradient(135deg,#cc0000,#aa0000); color:white; font-size:3rem; cursor:pointer; box-shadow:0 6px 20px rgba(204,0,0,0.4); transition:transform 0.15s, box-shadow 0.15s; display:flex; align-items:center; justify-content:center; }
+  .voice-mic-btn:hover:not(:disabled) { transform:scale(1.04); box-shadow:0 8px 28px rgba(204,0,0,0.5); }
+  .voice-mic-btn:disabled { opacity:0.5; cursor:not-allowed; }
+  .voice-mic-btn.recording { background:linear-gradient(135deg,#dc2626,#991b1b); animation:vmPulse 1.2s ease-in-out infinite; }
+  @keyframes vmPulse { 0%,100% { box-shadow:0 0 0 0 rgba(220,38,38,0.55), 0 6px 20px rgba(204,0,0,0.4); } 50% { box-shadow:0 0 0 22px rgba(220,38,38,0), 0 6px 20px rgba(204,0,0,0.4); } }
+  .voice-status { font-size:0.92rem; color:var(--muted); text-align:center; font-weight:500; }
+  .voice-timer { font-variant-numeric:tabular-nums; font-size:1.1rem; color:#cc0000; font-weight:600; }
+  .voice-transcript { background:#f8f8f8; border:1px solid var(--border); border-radius:10px; padding:12px 14px; min-height:80px; max-height:160px; overflow-y:auto; font-size:0.95rem; line-height:1.5; color:#222; margin:8px 0 14px; white-space:pre-wrap; }
+  .voice-transcript.empty { color:#999; font-style:italic; }
+  .voice-transcript .interim { color:#888; }
+  .voice-detected { background:#f0fdf4; border:1px solid #86efac; border-radius:10px; padding:12px 14px; margin-bottom:14px; }
+  .voice-detected.empty { display:none; }
+  .voice-detected h4 { font-size:0.82rem; color:#15803d; margin:0 0 8px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; }
+  .voice-detected-row { display:flex; gap:8px; align-items:baseline; font-size:0.88rem; padding:3px 0; }
+  .voice-detected-row .vlabel { color:#555; min-width:90px; font-weight:500; }
+  .voice-detected-row .vval { color:#111; font-weight:600; flex:1; }
+  .voice-actions { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
+  .voice-error { background:#fef2f2; border:1px solid #fecaca; color:#991b1b; border-radius:8px; padding:10px 12px; font-size:0.86rem; margin-bottom:12px; }
+  .voice-trigger-btn { background:linear-gradient(135deg,#cc0000,#aa0000); color:white; border:none; padding:9px 14px; border-radius:8px; font-size:0.88rem; cursor:pointer; display:inline-flex; align-items:center; gap:6px; font-weight:500; box-shadow:0 2px 8px rgba(204,0,0,0.25); transition:transform 0.1s, box-shadow 0.1s; }
+  .voice-trigger-btn:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(204,0,0,0.35); }
+  .voice-trigger-btn:active { transform:translateY(0); }
+
   /* MODALS */
   .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center; padding:20px; }
   .modal-overlay.open { display:flex; }
@@ -552,7 +580,10 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
 <div id="view-neu" class="view">
   <div class="card-header" style="margin-bottom:16px">
     <h1 id="form-title">Neuer Nacharbeitspunkt</h1>
-    <button class="btn btn-ghost" onclick="cancelEdit()">✕ Abbrechen</button>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="voice-trigger-btn" id="voice-trigger-btn" onclick="openVoiceModal()" title="Per Sprache anlegen">🎤 Sprach-Punkt</button>
+      <button class="btn btn-ghost" onclick="cancelEdit()">✕ Abbrechen</button>
+    </div>
   </div>
   <div class="card">
     <div class="grid-2">
@@ -781,6 +812,44 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
       </div>
       <div class="pe-toolbar-divider"></div>
       <button class="pe-tool-btn" onclick="undoLastAnnotation()" title="Letztes rückgängig">↶ Rückgängig</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============== VOICE-PUNKT MODAL ============== -->
+<div class="modal-overlay" id="modal-voice">
+  <div class="modal voice-modal">
+    <div class="voice-header">
+      <h3>🎤 Sprach-Punkt anlegen</h3>
+      <button class="modal-close" onclick="closeVoiceModal()" style="color:white;background:rgba(255,255,255,0.18);border-radius:6px;width:30px;height:30px">×</button>
+    </div>
+    <div class="voice-body">
+      <div id="voice-error-box" class="voice-error" style="display:none"></div>
+
+      <div class="voice-mic-wrap">
+        <button id="voice-mic-btn" class="voice-mic-btn" onclick="toggleVoiceRecording()">🎤</button>
+        <div class="voice-status" id="voice-status">Tippen zum Aufnehmen</div>
+        <div class="voice-timer" id="voice-timer" style="display:none">⏱ 0:00</div>
+      </div>
+
+      <div style="font-size:0.78rem;color:var(--muted);margin-bottom:6px;font-weight:500">📝 Transkript</div>
+      <div id="voice-transcript" class="voice-transcript empty">Hier erscheint dein gesprochener Text...</div>
+
+      <div id="voice-detected" class="voice-detected empty">
+        <h4>✓ Erkannt</h4>
+        <div id="voice-detected-rows"></div>
+      </div>
+
+      <div style="font-size:0.74rem;color:var(--muted);background:#f8f8f8;border-radius:8px;padding:8px 10px;margin-bottom:14px;line-height:1.5">
+        <strong>💡 Tipp:</strong> Sage z.B. <em>"Im Bad oben Silikonfuge gerissen, kritisch, Detlef, bis morgen"</em>.
+        Die App erkennt automatisch <strong>Kategorie</strong> (kritisch/eilig → Critical), <strong>Person</strong> (Sandra/Steffen/Monika/Detlef/Rainer/Heike/Jörn) und <strong>Fälligkeit</strong> (heute/morgen/in 3 Tagen).
+      </div>
+
+      <div class="voice-actions">
+        <button class="btn btn-ghost" id="voice-clear-btn" onclick="clearVoiceTranscript()">↻ Nochmal</button>
+        <button class="btn btn-ghost" onclick="closeVoiceModal()">Abbrechen</button>
+        <button class="btn btn-primary" id="voice-apply-btn" onclick="applyVoiceToForm()" disabled>✓ Übernehmen</button>
+      </div>
     </div>
   </div>
 </div>
@@ -4813,6 +4882,303 @@ function goToLoginFromPublic() {
 
 // Wire up the photo-editor canvas event handlers now that the DOM is parsed
 attachPhotoEditorHandlers();
+
+// ===================== VOICE-PUNKT (Sprach-Erkennung + Smart Parser) =====================
+const voiceState = {
+  rec: null,
+  recording: false,
+  finalText: '',
+  interimText: '',
+  startTs: 0,
+  timerId: null,
+  parsed: null,
+  supported: ('SpeechRecognition' in window) || ('webkitSpeechRecognition' in window)
+};
+
+const VOICE_NAMES = [
+  { key:'Sandra',  patterns:['sandra'] },
+  { key:'Steffen', patterns:['steffen','steven','stefan'] },
+  { key:'Monika',  patterns:['monika','monica'] },
+  { key:'Detlef',  patterns:['detlef','detlev'] },
+  { key:'Rainer',  patterns:['rainer','reiner'] },
+  { key:'Heike',   patterns:['heike','haike'] },
+  { key:'Jörn',    patterns:['jörn','joern','jorn','jörgen'] }
+];
+
+const VOICE_CRITICAL_WORDS = ['kritisch','kritikal','eilig','dringend','sofort','akut','gefährlich','gefahr','sicherheit','notfall','wichtig','asap','schnell','umgehend'];
+const VOICE_TODO_WORDS     = ['todo','to-do','to do','aufgabe','erledigen','kümmern','zuständig','soll machen','muss machen','besorgen','organisieren','planen'];
+const VOICE_NONCRIT_WORDS  = ['unwichtig','irgendwann','später','wenn zeit','gelegentlich','nebenbei','kleinigkeit','non-critical','noncritical','nicht eilig','keine eile'];
+
+function openVoiceModal() {
+  if (!voiceState.supported) {
+    openModal('modal-voice');
+    showVoiceError('Spracherkennung wird von diesem Browser nicht unterstützt. Funktioniert am besten in Chrome, Edge oder Safari (neueste Version) auf Android/iOS oder Desktop.');
+    document.getElementById('voice-mic-btn').disabled = true;
+    return;
+  }
+  voiceState.finalText = '';
+  voiceState.interimText = '';
+  voiceState.parsed = null;
+  document.getElementById('voice-transcript').textContent = 'Hier erscheint dein gesprochener Text...';
+  document.getElementById('voice-transcript').classList.add('empty');
+  document.getElementById('voice-detected').classList.add('empty');
+  document.getElementById('voice-detected-rows').innerHTML = '';
+  document.getElementById('voice-apply-btn').disabled = true;
+  document.getElementById('voice-status').textContent = 'Tippen zum Aufnehmen';
+  document.getElementById('voice-timer').style.display = 'none';
+  document.getElementById('voice-mic-btn').classList.remove('recording');
+  document.getElementById('voice-mic-btn').textContent = '🎤';
+  hideVoiceError();
+  openModal('modal-voice');
+}
+
+function closeVoiceModal() {
+  if (voiceState.recording) stopVoiceRecording();
+  closeModal('modal-voice');
+}
+
+function showVoiceError(msg) {
+  const box = document.getElementById('voice-error-box');
+  box.textContent = '⚠️ ' + msg;
+  box.style.display = '';
+}
+function hideVoiceError() { document.getElementById('voice-error-box').style.display = 'none'; }
+
+function toggleVoiceRecording() {
+  if (!voiceState.supported) return;
+  if (voiceState.recording) stopVoiceRecording();
+  else startVoiceRecording();
+}
+
+function startVoiceRecording() {
+  hideVoiceError();
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const rec = new SR();
+  rec.lang = 'de-DE';
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.maxAlternatives = 1;
+
+  rec.onstart = () => {
+    voiceState.recording = true;
+    voiceState.startTs = Date.now();
+    document.getElementById('voice-mic-btn').classList.add('recording');
+    document.getElementById('voice-mic-btn').textContent = '⏹';
+    document.getElementById('voice-status').textContent = '🔴 Aufnahme läuft — tippen zum Stoppen';
+    document.getElementById('voice-timer').style.display = '';
+    voiceState.timerId = setInterval(updateVoiceTimer, 250);
+  };
+
+  rec.onresult = (ev) => {
+    let interim = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const r = ev.results[i];
+      if (r.isFinal) voiceState.finalText += r[0].transcript + ' ';
+      else interim += r[0].transcript;
+    }
+    voiceState.interimText = interim;
+    renderVoiceTranscript();
+  };
+
+  rec.onerror = (ev) => {
+    console.warn('SpeechRecognition error:', ev.error);
+    if (ev.error === 'no-speech') return; // ignore
+    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+      showVoiceError('Mikrofon-Zugriff wurde verweigert. Bitte in den Browser-Einstellungen erlauben.');
+    } else if (ev.error === 'audio-capture') {
+      showVoiceError('Kein Mikrofon gefunden.');
+    } else if (ev.error === 'network') {
+      showVoiceError('Netzwerkfehler — Spracherkennung benötigt Internet.');
+    } else {
+      showVoiceError('Spracherkennungsfehler: ' + ev.error);
+    }
+    stopVoiceRecording();
+  };
+
+  rec.onend = () => {
+    if (voiceState.recording) {
+      // unexpected end while still recording -> finalize
+      finalizeVoiceRecording();
+    }
+  };
+
+  voiceState.rec = rec;
+  try { rec.start(); }
+  catch(e) { showVoiceError('Konnte Aufnahme nicht starten: ' + e.message); }
+}
+
+function stopVoiceRecording() {
+  if (voiceState.rec) {
+    try { voiceState.rec.stop(); } catch(e){}
+  }
+  finalizeVoiceRecording();
+}
+
+function finalizeVoiceRecording() {
+  voiceState.recording = false;
+  if (voiceState.timerId) { clearInterval(voiceState.timerId); voiceState.timerId = null; }
+  document.getElementById('voice-mic-btn').classList.remove('recording');
+  document.getElementById('voice-mic-btn').textContent = '🎤';
+  document.getElementById('voice-status').textContent = voiceState.finalText.trim() ? 'Fertig — Erkennung läuft...' : 'Nichts erkannt — nochmal versuchen';
+  // merge interim into final
+  if (voiceState.interimText.trim()) {
+    voiceState.finalText += voiceState.interimText + ' ';
+    voiceState.interimText = '';
+  }
+  renderVoiceTranscript();
+  if (voiceState.finalText.trim()) {
+    voiceState.parsed = parseVoiceInput(voiceState.finalText.trim());
+    renderVoiceDetected(voiceState.parsed);
+    document.getElementById('voice-apply-btn').disabled = false;
+    document.getElementById('voice-status').textContent = '✓ Erkannt — bitte prüfen & übernehmen';
+  }
+}
+
+function updateVoiceTimer() {
+  const sec = Math.floor((Date.now() - voiceState.startTs) / 1000);
+  const mm = String(Math.floor(sec/60)).padStart(1,'0');
+  const ss = String(sec % 60).padStart(2,'0');
+  document.getElementById('voice-timer').textContent = '⏱ ' + mm + ':' + ss;
+}
+
+function renderVoiceTranscript() {
+  const el = document.getElementById('voice-transcript');
+  const f = voiceState.finalText.trim();
+  const i = voiceState.interimText.trim();
+  if (!f && !i) {
+    el.textContent = 'Hier erscheint dein gesprochener Text...';
+    el.classList.add('empty');
+  } else {
+    el.classList.remove('empty');
+    el.innerHTML = esc(f) + (i ? ' <span class="interim">' + esc(i) + '</span>' : '');
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+function clearVoiceTranscript() {
+  if (voiceState.recording) stopVoiceRecording();
+  voiceState.finalText = '';
+  voiceState.interimText = '';
+  voiceState.parsed = null;
+  renderVoiceTranscript();
+  document.getElementById('voice-detected').classList.add('empty');
+  document.getElementById('voice-detected-rows').innerHTML = '';
+  document.getElementById('voice-apply-btn').disabled = true;
+  document.getElementById('voice-status').textContent = 'Tippen zum Aufnehmen';
+  document.getElementById('voice-timer').style.display = 'none';
+}
+
+// ----- Smart parser -----
+function parseVoiceInput(text) {
+  const out = { titel:'', beschreibung:text, kategorie:null, zustaendig:null, dueDate:null, dueLabel:null };
+  const lower = ' ' + text.toLowerCase().replace(/[.,;:!?]/g,' ').replace(/\s+/g,' ') + ' ';
+
+  // Category
+  if (VOICE_CRITICAL_WORDS.some(w => lower.includes(' ' + w + ' ') || lower.includes(' ' + w + ',') || lower.includes(' ' + w))) out.kategorie = 'critical';
+  else if (VOICE_NONCRIT_WORDS.some(w => lower.includes(w))) out.kategorie = 'noncritical';
+  else if (VOICE_TODO_WORDS.some(w => lower.includes(w))) out.kategorie = 'todo';
+
+  // Name detection
+  for (const n of VOICE_NAMES) {
+    for (const p of n.patterns) {
+      if (lower.includes(' ' + p + ' ') || lower.includes(' ' + p + ',') || lower.endsWith(' ' + p)) {
+        out.zustaendig = n.key;
+        break;
+      }
+    }
+    if (out.zustaendig) break;
+  }
+  // If a name was detected and no explicit category -> assume to-do
+  if (out.zustaendig && !out.kategorie) out.kategorie = 'todo';
+
+  // Date detection
+  const today = new Date(); today.setHours(0,0,0,0);
+  const fmt = d => d.toISOString().slice(0,10);
+  let dueDate = null, dueLabel = null;
+  if (/\bheute\b/.test(lower))             { dueDate = fmt(today);                                          dueLabel = 'heute'; }
+  else if (/\bmorgen\b/.test(lower))       { const d = new Date(today); d.setDate(d.getDate()+1);            dueDate = fmt(d); dueLabel = 'morgen'; }
+  else if (/\bübermorgen\b/.test(lower))   { const d = new Date(today); d.setDate(d.getDate()+2);            dueDate = fmt(d); dueLabel = 'übermorgen'; }
+  else if (/\bnächste\s+woche\b/.test(lower)) { const d = new Date(today); d.setDate(d.getDate()+7);         dueDate = fmt(d); dueLabel = 'nächste Woche'; }
+  else {
+    let m = lower.match(/\bin\s+(\d+)\s+(tag|tagen|woche|wochen|monat|monaten)\b/);
+    if (m) {
+      const n = parseInt(m[1],10); const u = m[2];
+      const d = new Date(today);
+      if (u.startsWith('tag')) d.setDate(d.getDate()+n);
+      else if (u.startsWith('woche')) d.setDate(d.getDate()+n*7);
+      else d.setMonth(d.getMonth()+n);
+      dueDate = fmt(d); dueLabel = 'in ' + n + ' ' + u;
+    } else {
+      m = lower.match(/\bam\s+(\d{1,2})\.\s*(\d{1,2})\.(?:\s*(\d{2,4}))?/);
+      if (m) {
+        let yr = m[3] ? parseInt(m[3],10) : today.getFullYear();
+        if (yr < 100) yr += 2000;
+        const d = new Date(yr, parseInt(m[2],10)-1, parseInt(m[1],10));
+        if (!isNaN(d.getTime())) { dueDate = fmt(d); dueLabel = d.toLocaleDateString('de-DE'); }
+      }
+    }
+  }
+  out.dueDate = dueDate; out.dueLabel = dueLabel;
+
+  // Title: first sentence chunk, before any cue words like "kritisch", names, "bis", etc., max ~60 chars
+  let titleSrc = text;
+  // Cut at first sentence-ending punctuation
+  const cutMatch = titleSrc.match(/^[^.!?]+/);
+  if (cutMatch) titleSrc = cutMatch[0];
+  // Cut at "kommata + cue word"
+  const cueWords = [...VOICE_CRITICAL_WORDS, ...VOICE_NONCRIT_WORDS, ...VOICE_TODO_WORDS, 'bis ', 'für ', 'soll ', 'muss '];
+  for (const cw of cueWords) {
+    const idx = titleSrc.toLowerCase().indexOf(' ' + cw);
+    if (idx > 8 && idx < titleSrc.length) { titleSrc = titleSrc.slice(0, idx); }
+  }
+  titleSrc = titleSrc.replace(/[,;:].*$/,'').trim();
+  // Cap at ~60 chars on word boundary
+  if (titleSrc.length > 60) {
+    titleSrc = titleSrc.slice(0,60);
+    const sp = titleSrc.lastIndexOf(' ');
+    if (sp > 30) titleSrc = titleSrc.slice(0,sp);
+    titleSrc += '…';
+  }
+  // Capitalize first letter
+  if (titleSrc.length > 0) titleSrc = titleSrc.charAt(0).toUpperCase() + titleSrc.slice(1);
+  out.titel = titleSrc;
+
+  return out;
+}
+
+function renderVoiceDetected(p) {
+  const rows = [];
+  if (p.titel) rows.push(`<div class="voice-detected-row"><span class="vlabel">📝 Titel:</span><span class="vval">${esc(p.titel)}</span></div>`);
+  if (p.kategorie) {
+    const lbl = p.kategorie === 'critical' ? '🔴 Critical' : p.kategorie === 'todo' ? '📋 To-Do' : '⚫ Non-Critical';
+    rows.push(`<div class="voice-detected-row"><span class="vlabel">🏷️ Kategorie:</span><span class="vval">${lbl}</span></div>`);
+  }
+  if (p.zustaendig) rows.push(`<div class="voice-detected-row"><span class="vlabel">👤 Zuständig:</span><span class="vval">${esc(p.zustaendig)}</span></div>`);
+  if (p.dueDate)    rows.push(`<div class="voice-detected-row"><span class="vlabel">📅 Fällig:</span><span class="vval">${esc(p.dueLabel)} (${esc(p.dueDate)})</span></div>`);
+  rows.push(`<div class="voice-detected-row"><span class="vlabel">📄 Beschreibung:</span><span class="vval" style="font-weight:400;font-style:italic;color:#555">${esc(p.beschreibung)}</span></div>`);
+  document.getElementById('voice-detected-rows').innerHTML = rows.join('');
+  document.getElementById('voice-detected').classList.remove('empty');
+}
+
+function applyVoiceToForm() {
+  if (!voiceState.parsed) return;
+  const p = voiceState.parsed;
+  const tEl = document.getElementById('f-titel');
+  const bEl = document.getElementById('f-beschreibung');
+  const kEl = document.getElementById('f-kategorie');
+  const zEl = document.getElementById('f-zustaendig');
+  const dEl = document.getElementById('f-duedate');
+
+  if (tEl && p.titel)        tEl.value = p.titel;
+  if (bEl && p.beschreibung) bEl.value = p.beschreibung;
+  if (kEl && p.kategorie)    { kEl.value = p.kategorie; updateTodoVisibility(); }
+  if (zEl && p.zustaendig && p.kategorie === 'todo') zEl.value = p.zustaendig;
+  if (dEl && p.dueDate)      dEl.value = p.dueDate;
+
+  closeVoiceModal();
+  // Small visual cue: scroll to form top
+  try { document.getElementById('f-titel').focus(); } catch(e){}
+}
 
 // ===================== BOOT =====================
 applyLang(); // Apply language immediately (before login/public view)
