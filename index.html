@@ -2,9 +2,18 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Hausbau Nacharbeit</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏗️</text></svg>">
+
+<!-- PWA / Web App -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#cc0000">
+<meta name="application-name" content="Hausbau Nacharbeit">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Hausbau">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <style>
   :root {
     --primary: #cc0000; --primary-dark: #aa0000; --danger: #cc0000;
@@ -139,6 +148,23 @@
   .pe-color-btn.active { border-color:white; transform:scale(1.15); }
   .pe-toolbar-divider { width:1px; align-self:stretch; background:#333; }
   @media (max-width:600px) { .pe-tool-btn { font-size:0.78rem; padding:6px 9px; min-width:48px; } .pe-color-btn { width:26px; height:26px; } .pe-toolbar { padding:10px; gap:10px; } }
+
+  /* PWA Offline + Install */
+  .pwa-offline-bar { position:fixed; top:0; left:0; right:0; z-index:2000; background:#f59e0b; color:#1a1a1a; text-align:center; padding:6px 12px; font-size:0.85rem; font-weight:600; display:none; box-shadow:0 2px 6px rgba(0,0,0,0.15); }
+  .pwa-offline-bar.visible { display:block; }
+  .pwa-offline-bar.online-restored { background:#16a34a; color:white; }
+  body.pwa-has-bar { padding-top:30px; }
+  .pwa-install-toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); z-index:1900; background:#0f172a; color:white; padding:12px 14px 12px 16px; border-radius:12px; box-shadow:0 8px 28px rgba(0,0,0,0.35); display:none; align-items:center; gap:12px; max-width:92vw; font-size:0.9rem; }
+  .pwa-install-toast.visible { display:flex; animation:pwaSlideUp 0.3s ease-out; }
+  @keyframes pwaSlideUp { from { transform:translate(-50%, 80px); opacity:0; } to { transform:translate(-50%, 0); opacity:1; } }
+  .pwa-install-toast .icon { font-size:1.4rem; line-height:1; }
+  .pwa-install-toast .text { flex:1; line-height:1.35; }
+  .pwa-install-toast .text strong { color:#fbbf24; }
+  .pwa-install-toast button { background:#cc0000; color:white; border:none; padding:8px 14px; border-radius:8px; font-size:0.85rem; cursor:pointer; font-weight:600; white-space:nowrap; }
+  .pwa-install-toast button.dismiss { background:transparent; color:#94a3b8; padding:4px 8px; font-weight:400; }
+  .pwa-update-toast { position:fixed; bottom:18px; right:18px; z-index:1900; background:#15803d; color:white; padding:10px 14px; border-radius:10px; box-shadow:0 6px 20px rgba(0,0,0,0.3); display:none; align-items:center; gap:10px; font-size:0.88rem; cursor:pointer; }
+  .pwa-update-toast.visible { display:flex; }
+  @media (max-width:768px) { .pwa-update-toast { left:12px; right:12px; bottom:12px; justify-content:center; } }
 
   /* VOICE-PUNKT MODAL */
   .voice-modal { max-width:560px !important; padding:0 !important; overflow:hidden; }
@@ -936,6 +962,20 @@ create policy "anon_full" on public.punkt_locations    for all to anon using (tr
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+
+<!-- ==================== PWA UI ELEMENTS ==================== -->
+<div id="pwa-offline-bar" class="pwa-offline-bar"></div>
+<div id="pwa-install-toast" class="pwa-install-toast">
+  <span class="icon">📱</span>
+  <span class="text"><strong>App installieren?</strong><br>Für schnelleren Zugriff &amp; Offline-Nutzung.</span>
+  <button class="accept" onclick="pwaInstallAccept()">Installieren</button>
+  <button class="dismiss" onclick="pwaInstallDismiss()">Später</button>
+</div>
+<div id="pwa-update-toast" class="pwa-update-toast">
+  <span>🔄</span>
+  <span>Neue Version verfügbar — tippen zum Laden</span>
+</div>
+
 <script>
 // ===================== SUPABASE CONFIG (fest eingebaut) =====================
 const SUPABASE_URL = 'https://knwlvsndlhlxozyqmvoe.supabase.co';
@@ -1579,7 +1619,18 @@ async function startApp() {
   document.getElementById('config-screen').style.display = 'none';
   document.getElementById('main-app').style.display = 'block';
   showLoading(t('ldgData'));
-  await loadAll();
+  try {
+    await loadAll();
+  } catch (e) {
+    hideLoading();
+    if (!navigator.onLine) {
+      pwaShowOfflineBar(false);
+      alert('Du bist offline und es gibt noch keine zwischengespeicherten Daten. Verbinde dich einmal mit dem Internet, dann ist die App auch offline nutzbar.');
+    } else {
+      alert('Fehler beim Laden der Daten: ' + (e.message || e));
+    }
+    return;
+  }
   await ensureTeamContacts();
   hideLoading();
   applyLang();
@@ -5651,6 +5702,135 @@ if (pendingPunktDeepLink && !(loggedInUser && USERS[loggedInUser])) {
   initAfterLogin();
 }
 // else: login-screen bleibt sichtbar
+
+// ==================== PWA: Service Worker, Offline-Indikator, Install ====================
+const PWA = {
+  swReg: null,
+  deferredInstallPrompt: null,
+  isStandalone: window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true,
+  // localStorage key for "user dismissed install prompt"
+  DISMISS_KEY: 'pwa-install-dismissed'
+};
+
+function pwaShowOfflineBar(online) {
+  const bar = document.getElementById('pwa-offline-bar');
+  if (!bar) return;
+  if (online) {
+    bar.textContent = '✓ Wieder online — Änderungen werden gespeichert';
+    bar.classList.add('online-restored');
+    bar.classList.add('visible');
+    document.body.classList.add('pwa-has-bar');
+    setTimeout(() => {
+      bar.classList.remove('visible');
+      document.body.classList.remove('pwa-has-bar');
+      bar.classList.remove('online-restored');
+    }, 2500);
+  } else {
+    bar.textContent = '⚠️ Du bist offline — gespeicherte Daten sichtbar, neue Änderungen erst beim nächsten Online-Sync';
+    bar.classList.remove('online-restored');
+    bar.classList.add('visible');
+    document.body.classList.add('pwa-has-bar');
+  }
+}
+
+window.addEventListener('online',  () => pwaShowOfflineBar(true));
+window.addEventListener('offline', () => pwaShowOfflineBar(false));
+// Initial state if already offline at load
+if (!navigator.onLine) setTimeout(() => pwaShowOfflineBar(false), 800);
+
+// Service Worker registration
+if ('serviceWorker' in navigator) {
+  // Wait for full page load to not compete with critical resources
+  window.addEventListener('load', async () => {
+    try {
+      const reg = await navigator.serviceWorker.register('./service-worker.js');
+      PWA.swReg = reg;
+      // Detect a waiting SW (new version available)
+      if (reg.waiting) pwaShowUpdateAvailable();
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', () => {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+            pwaShowUpdateAvailable();
+          }
+        });
+      });
+      // When the new SW takes over, reload once so all clients use the new shell
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (reloaded) return;
+        reloaded = true;
+        window.location.reload();
+      });
+    } catch (e) {
+      console.warn('SW registration failed:', e);
+    }
+  });
+}
+
+function pwaShowUpdateAvailable() {
+  const toast = document.getElementById('pwa-update-toast');
+  if (!toast) return;
+  toast.classList.add('visible');
+  toast.onclick = () => {
+    if (PWA.swReg && PWA.swReg.waiting) PWA.swReg.waiting.postMessage('SKIP_WAITING');
+    // Controllerchange listener handles reload
+  };
+}
+
+// Install prompt (Android Chrome / Edge)
+window.addEventListener('beforeinstallprompt', (ev) => {
+  ev.preventDefault();
+  PWA.deferredInstallPrompt = ev;
+  // Don't bug the user if already installed, or they dismissed in the last 14 days
+  if (PWA.isStandalone) return;
+  const dismissedAt = parseInt(storageGet(PWA.DISMISS_KEY) || '0', 10);
+  if (dismissedAt && (Date.now() - dismissedAt) < 14*24*3600*1000) return;
+  setTimeout(pwaShowInstallToast, 4000);
+});
+
+function pwaShowInstallToast() {
+  const toast = document.getElementById('pwa-install-toast');
+  if (!toast) return;
+  toast.classList.add('visible');
+}
+
+function pwaInstallAccept() {
+  const toast = document.getElementById('pwa-install-toast');
+  toast.classList.remove('visible');
+  if (PWA.deferredInstallPrompt) {
+    PWA.deferredInstallPrompt.prompt();
+    PWA.deferredInstallPrompt.userChoice.finally(() => {
+      PWA.deferredInstallPrompt = null;
+    });
+  }
+}
+
+function pwaInstallDismiss() {
+  const toast = document.getElementById('pwa-install-toast');
+  toast.classList.remove('visible');
+  storageSet(PWA.DISMISS_KEY, String(Date.now()));
+}
+
+// iOS Safari: show install hint (no beforeinstallprompt support).
+// Trigger once after login, only if not already standalone and not dismissed.
+function pwaMaybeShowIOSHint() {
+  if (PWA.isStandalone) return;
+  const ua = navigator.userAgent;
+  const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+  if (!isIOS) return;
+  const dismissedAt = parseInt(storageGet(PWA.DISMISS_KEY) || '0', 10);
+  if (dismissedAt && (Date.now() - dismissedAt) < 14*24*3600*1000) return;
+  const toast = document.getElementById('pwa-install-toast');
+  if (!toast) return;
+  toast.querySelector('.text').innerHTML = '<strong>App installieren:</strong><br>Tippe in Safari unten auf <span style="background:#1e293b;border:1px solid #475569;padding:1px 6px;border-radius:4px">⬆️</span> → "Zum Home-Bildschirm"';
+  toast.querySelector('button.accept').style.display = 'none';
+  toast.classList.add('visible');
+}
+// Trigger after a delay so it doesn't appear immediately on first visit
+setTimeout(pwaMaybeShowIOSHint, 6000);
+
 </script>
 </body>
 </html>

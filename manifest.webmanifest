@@ -1,0 +1,35 @@
+{
+  "name": "Hausbau Nacharbeit",
+  "short_name": "Hausbau",
+  "description": "Erfassung & Nachverfolgung von Bau-Nacharbeitspunkten, Mängeln und To-Dos.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#cc0000",
+  "lang": "de",
+  "categories": ["productivity", "utilities", "business"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-192-maskable.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Neuer Punkt",
+      "short_name": "Neu",
+      "description": "Direkt zur Punkt-Erfassung",
+      "url": "./?action=new",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Punkte-Liste",
+      "short_name": "Liste",
+      "description": "Alle Nacharbeitspunkte",
+      "url": "./?view=liste",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
