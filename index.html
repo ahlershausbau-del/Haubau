@@ -101,8 +101,20 @@
   .badge-critical { background:#fee2e2; color:var(--danger); border:1px solid var(--danger); }
   .badge-noncritical { background:#f0f0f0; color:#111111; border:1px solid #333333; }
   .badge-todo { background:#dbeafe; color:#1e40af; border:1px solid #3b82f6; }
-  .badge-open { background:#fff0f0; color:#aa0000; border:1px solid #cc0000; }
-  .badge-done { background:#dcfce7; color:#14532d; border:1px solid #16a34a; }
+  .badge-open        { background:#fff7ed; color:#9a3412; border:1px solid #fb923c; }
+  .badge-in_progress { background:#dbeafe; color:#1d4ed8; border:1px solid #3b82f6; }
+  .badge-review      { background:#f3e8ff; color:#7e22ce; border:1px solid #a855f7; }
+  .badge-done        { background:#dcfce7; color:#166534; border:1px solid #16a34a; }
+  /* Status segmented control in detail modal */
+  .status-flow { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .status-flow .sf-btn { flex:1; min-width:104px; padding:8px 10px; border:2px solid var(--border); background:white; border-radius:8px; font-size:0.85rem; font-weight:500; cursor:pointer; transition:all 0.15s; color:#444; text-align:center; line-height:1.3; }
+  .status-flow .sf-btn:hover:not(.active) { background:#fafafa; border-color:#999; }
+  .status-flow .sf-btn.active { border-width:2px; cursor:default; font-weight:700; box-shadow:0 2px 6px rgba(0,0,0,0.08); }
+  .status-flow .sf-btn.active[data-status="open"]        { background:#fff7ed; color:#9a3412; border-color:#fb923c; }
+  .status-flow .sf-btn.active[data-status="in_progress"] { background:#dbeafe; color:#1d4ed8; border-color:#3b82f6; }
+  .status-flow .sf-btn.active[data-status="review"]      { background:#f3e8ff; color:#7e22ce; border-color:#a855f7; }
+  .status-flow .sf-btn.active[data-status="done"]        { background:#dcfce7; color:#166534; border-color:#16a34a; }
+  @media (max-width:600px) { .status-flow .sf-btn { min-width:0; font-size:0.78rem; padding:7px 6px; } }
 
   /* PUNKT CARDS */
   .punkt-card { background:var(--card); border-radius:12px; border:1px solid var(--border); padding:16px; margin-bottom:12px; cursor:pointer; transition:all 0.15s; box-shadow:0 1px 3px rgba(0,0,0,0.05); display:flex; gap:16px; align-items:flex-start; }
@@ -436,6 +448,24 @@ create table if not exists punkte (
 alter table public.punkte add column if not exists aufgenommen_von text;
 alter table public.punkte add column if not exists geschlossen_at timestamptz;
 alter table public.punkte add column if not exists zustaendig text;
+
+-- Status-Phasen v1.23: open -> in_progress -> review -> done
+-- Vorhandenen CHECK-Constraint ersetzen, damit auch die neuen Werte erlaubt sind.
+do $$
+begin
+  if exists (select 1 from information_schema.constraint_column_usage
+             where table_name='punkte' and constraint_name like '%status%') then
+    execute (
+      select 'alter table public.punkte drop constraint ' || quote_ident(conname)
+      from pg_constraint
+      where conrelid='public.punkte'::regclass and contype='c'
+      and pg_get_constraintdef(oid) ilike '%status%' limit 1
+    );
+  end if;
+exception when others then null;
+end $$;
+alter table public.punkte add constraint punkte_status_check
+  check (status in ('open','in_progress','review','done'));
 
 create table if not exists photos (
   id uuid default gen_random_uuid() primary key,
@@ -799,9 +829,12 @@ create policy "anon_full" on public.punkt_locations    for all to anon using (tr
     </div>
     <div id="detail-content"></div>
     <hr>
+    <div style="margin-bottom:14px">
+      <div style="font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:4px">Status</div>
+      <div id="detail-status-flow" class="status-flow"></div>
+    </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <button class="btn btn-primary" id="detail-edit-btn">✏️ Bearbeiten</button>
-      <button class="btn btn-success" id="detail-done-btn">✓ Als erledigt markieren</button>
       <button class="btn btn-ghost" id="detail-print-btn">🖨️ Etikett</button>
       <button class="btn btn-danger" id="detail-del-btn">🗑️ Löschen</button>
     </div>
@@ -1007,7 +1040,7 @@ const LANG = {
     listTitle:'Nacharbeitspunkte', searchPlaceholder:'🔍 Suchen...',
     allFloors:'Alle Etagen', allCats:'Alle Kategorien',
     allStatus:'Alle Status', allResp:'Alle Verantwortlichen',
-    statusOpen:'Offen', statusDone:'Erledigt',
+    statusOpen:'Offen', statusInProgress:'In Bearbeitung', statusReview:'Zur Prüfung', statusDone:'Erledigt',
     catCritical:'🔴 Critical', catNonCritical:'⚫ Non-Critical', catTodo:'📋 To-Do',
     noItems:'Keine Punkte gefunden',
     enteredOn:'Eingetragen:', recordedByIcon:'✍️',
@@ -1180,7 +1213,7 @@ const LANG = {
     listTitle:'Rework Items', searchPlaceholder:'🔍 Search...',
     allFloors:'All Floors', allCats:'All Categories',
     allStatus:'All Status', allResp:'All Responsible',
-    statusOpen:'Open', statusDone:'Done',
+    statusOpen:'Open', statusInProgress:'In Progress', statusReview:'In Review', statusDone:'Done',
     catCritical:'🔴 Critical', catNonCritical:'⚫ Non-Critical', catTodo:'📋 To-Do',
     noItems:'No items found',
     enteredOn:'Created:', recordedByIcon:'✍️',
@@ -1722,10 +1755,10 @@ function showView(name) {
 function renderStats() {
   const total = allPunkte.length;
   const critical = allPunkte.filter(p => p.kategorie === 'critical').length;
-  const open = allPunkte.filter(p => p.status === 'open').length;
+  const open = allPunkte.filter(p => p.status !== 'done').length;
   const done = allPunkte.filter(p => p.status === 'done').length;
   const today = new Date(); today.setHours(0,0,0,0);
-  const overdue = allPunkte.filter(p => p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today).length;
+  const overdue = allPunkte.filter(p => p.status!=='done' && p.due_date && new Date(p.due_date+'T00:00:00') < today).length;
   document.getElementById('stats-container').innerHTML = `
     <div class="stat-card"><div class="stat-number" style="color:var(--primary)">${total}</div><div class="stat-label">${t('statTotal')}</div></div>
     <div class="stat-card"><div class="stat-number" style="color:var(--danger)">${critical}</div><div class="stat-label">${t('statCritical')}</div></div>
@@ -1766,7 +1799,7 @@ function renderListe() {
     const etagen = etageIds.map(eid => allEtagen.find(e => e.id === eid)).filter(Boolean);
     const totalPins = (p.locations || []).filter(l => l.loc_x != null && l.loc_y != null).length;
     const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
-    const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
+    const overdue = p.status !== 'done' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
     return `
       <div class="punkt-card ${catCssClass(p.kategorie)}" onclick="openDetail('${p.id}')">
         <div class="punkt-number">#${p.nummer}</div>
@@ -1775,7 +1808,7 @@ function renderListe() {
           ${p.beschreibung?`<div style="font-size:0.85rem;color:var(--muted);margin-top:2px">${esc(p.beschreibung.substring(0,120))}${p.beschreibung.length>120?'...':''}</div>`:''}
           <div class="punkt-meta">
             <span class="badge badge-${catCssClass(p.kategorie)}">${catLabel(p.kategorie)}</span>
-            <span class="badge badge-${p.status}">${p.status==='open'?t('statusOpen'):t('statusDone')}</span>
+            ${statusBadgeHtml(p.status)}
             ${p.kategorie==='todo'&&p.zustaendig?`<span class="tag" style="background:#dbeafe;color:#1e40af;border-color:#3b82f6">👤 ${esc(p.zustaendig)}</span>`:''}
             ${etagen.map(e=>`<span class="tag">🏢 ${esc(e.name)}</span>`).join('')}
             ${totalPins>1?`<span class="tag" style="background:#fef3c7;color:#92400e;border-color:#f59e0b">📍 ${totalPins} Positionen</span>`:''}
@@ -1798,7 +1831,7 @@ function populateFilters() {
   if(kEl){const kV=kEl.value;kEl.innerHTML=`<option value="">${t('allCats')}</option><option value="critical">${t('catCritical')}</option><option value="noncritical">${t('catNonCritical')}</option><option value="todo">${t('catTodo')}</option>`;kEl.value=kV;}
   // Filter status options
   const sEl=document.getElementById('filter-status');
-  if(sEl){const sV=sEl.value;sEl.innerHTML=`<option value="">${t('allStatus')}</option><option value="open">${t('statusOpen')}</option><option value="done">${t('statusDone')}</option>`;sEl.value=sV;}
+  if(sEl){const sV=sEl.value;sEl.innerHTML=`<option value="">${t('allStatus')}</option><option value="open">🟡 ${t('statusOpen')}</option><option value="in_progress">🔵 ${t('statusInProgress')}</option><option value="review">🟣 ${t('statusReview')}</option><option value="done">✓ ${t('statusDone')}</option>`;sEl.value=sV;}
   // Search placeholder
   const srEl=document.getElementById('filter-search');
   if(srEl) srEl.placeholder=t('searchPlaceholder');
@@ -1829,11 +1862,11 @@ async function openDetail(id) {
   document.getElementById('detail-title').textContent = `#${p.nummer} – ${p.titel}`;
   document.getElementById('detail-badges').innerHTML = `
     <span class="badge badge-${catCssClass(p.kategorie)}">${catLabel(p.kategorie)}</span>
-    <span class="badge badge-${p.status}">${p.status==='open'?t('statusOpen'):t('statusDone')}</span>
+    ${statusBadgeHtml(p.status)}
     ${p.kategorie==='todo'&&p.zustaendig?`<span class="badge" style="background:#dbeafe;color:#1e40af;border:1px solid #3b82f6">👤 ${esc(p.zustaendig)}</span>`:''}`;
 
   const today=new Date(); today.setHours(0,0,0,0);
-  const overdue=p.status==='open'&&p.due_date&&new Date(p.due_date+'T00:00:00')<today;
+  const overdue=p.status!=='done'&&p.due_date&&new Date(p.due_date+'T00:00:00')<today;
 
   showLoading(t('ldgPhotos'));
   let fotos=[];
@@ -1883,9 +1916,7 @@ async function openDetail(id) {
 
   document.getElementById('detail-edit-btn').textContent=t('btnEdit');
   document.getElementById('detail-edit-btn').onclick=()=>{closeModal('modal-detail');editPunkt(id);};
-  const doneBtn=document.getElementById('detail-done-btn');
-  doneBtn.textContent=p.status==='done'?t('btnMarkOpen'):t('btnMarkDone');
-  doneBtn.onclick=()=>toggleDone(id,p.status);
+  renderStatusFlow(id, p.status);
   document.getElementById('detail-del-btn').textContent=t('btnDelete');
   document.getElementById('detail-del-btn').onclick=()=>deletePunkt(id);
   const printBtn = document.getElementById('detail-print-btn');
@@ -1893,9 +1924,25 @@ async function openDetail(id) {
   openModal('modal-detail');
 }
 
-async function toggleDone(id, cur) {
-  const newStatus = cur === 'done' ? 'open' : 'done';
-  const upd = { status: newStatus, geschlossen_at: newStatus === 'done' ? new Date().toISOString() : null };
+// Renders 4-step status segmented control inside detail modal
+function renderStatusFlow(id, currentStatus) {
+  const el = document.getElementById('detail-status-flow');
+  if (!el) return;
+  const cur = normalizeStatus(currentStatus);
+  el.innerHTML = STATUS_ORDER.map(s => {
+    const isActive = s === cur;
+    return `<button type="button" class="sf-btn ${isActive?'active':''}" data-status="${s}"
+              ${isActive?'disabled':''}
+              onclick="setPunktStatus('${id}','${s}')">${statusIcon(s)} ${statusLabel(s)}</button>`;
+  }).join('');
+}
+
+async function setPunktStatus(id, newStatus) {
+  if (!STATUS_ORDER.includes(newStatus)) return;
+  const upd = {
+    status: newStatus,
+    geschlossen_at: newStatus === 'done' ? new Date().toISOString() : null
+  };
   showLoading(t('ldgSave'));
   let { error } = await sb.from('punkte').update(upd).eq('id', id);
   // Fallback: column might not exist in older schemas — retry without it
@@ -1903,15 +1950,37 @@ async function toggleDone(id, cur) {
     console.warn('geschlossen_at column missing — updating status only');
     ({ error } = await sb.from('punkte').update({ status: newStatus }).eq('id', id));
   }
+  // Fallback: CHECK-Constraint noch alt -> hint zur SQL-Migration
+  if (error && /status_check|check constraint/i.test(error.message || JSON.stringify(error))) {
+    hideLoading();
+    alert('⚠️ Die Status-Phasen sind noch nicht in der Datenbank aktiviert.\nBitte im Supabase SQL-Editor folgendes ausführen:\n\nalter table public.punkte drop constraint if exists punkte_status_check;\nalter table public.punkte add constraint punkte_status_check\n  check (status in (\'open\',\'in_progress\',\'review\',\'done\'));');
+    return;
+  }
   hideLoading();
   if (error) {
-    console.error('toggleDone failed:', error);
+    console.error('setPunktStatus failed:', error);
     alert('Fehler beim Speichern: ' + (error.message || JSON.stringify(error)));
     return;
   }
-  await refreshPunkte();
-  closeModal('modal-detail');
+  // Live-Update: lokal Status setzen, Modal-Badges aktualisieren, Liste neu rendern
+  const p = allPunkte.find(x => x.id === id);
+  if (p) p.status = newStatus;
+  renderStatusFlow(id, newStatus);
+  // Re-render the modal badges
+  const badgesEl = document.getElementById('detail-badges');
+  if (badgesEl && p) {
+    badgesEl.innerHTML = `
+      <span class="badge badge-${catCssClass(p.kategorie)}">${catLabel(p.kategorie)}</span>
+      ${statusBadgeHtml(p.status)}
+      ${p.kategorie==='todo'&&p.zustaendig?`<span class="badge" style="background:#dbeafe;color:#1e40af;border:1px solid #3b82f6">👤 ${esc(p.zustaendig)}</span>`:''}`;
+  }
+  // Refresh background list
   renderListe();
+}
+
+// Backward-compat: existing call sites may still reference toggleDone
+async function toggleDone(id, cur) {
+  return setPunktStatus(id, cur === 'done' ? 'open' : 'done');
 }
 
 async function deletePunkt(id) {
@@ -1925,6 +1994,34 @@ async function deletePunkt(id) {
 // ===================== FORM =====================
 // Helpers for the 3-category system (critical / noncritical / todo)
 const TODO_ASSIGNEES = ['Sandra','Steffen','Monika','Detlef','Rainer','Heike','Jörn'];
+
+// ===================== STATUS-PHASEN =====================
+// Workflow: open -> in_progress -> review -> done (rückwärts auch möglich)
+const STATUS_ORDER = ['open','in_progress','review','done'];
+function statusLabel(s) {
+  switch (s) {
+    case 'in_progress': return t('statusInProgress');
+    case 'review':      return t('statusReview');
+    case 'done':        return t('statusDone');
+    default:            return t('statusOpen');
+  }
+}
+function statusIcon(s) {
+  return s === 'done' ? '✓' : s === 'review' ? '🟣' : s === 'in_progress' ? '🔵' : '🟡';
+}
+function statusBadgeHtml(s) {
+  return `<span class="badge badge-${s||'open'}">${statusIcon(s)} ${statusLabel(s)}</span>`;
+}
+// Migration-Helper: alte Datensätze die status=null haben gelten als 'open'
+function normalizeStatus(s) {
+  return STATUS_ORDER.includes(s) ? s : 'open';
+}
+// Export-Helper für Excel/PDF: gibt sinnvollen Text inkl. "überfällig" zurück
+function statusExportText(s, overdue) {
+  const base = statusLabel(s);
+  if (s !== 'done' && overdue) return base + ' (' + (t('xlOverdue').match(/\(([^)]+)\)/)?.[1] || 'überfällig') + ')';
+  return base;
+}
 function catLabel(k) {
   if (k === 'critical') return t('catCritical');
   if (k === 'todo')     return t('catTodo');
@@ -2460,7 +2557,7 @@ async function renderDashboard() {
       if (located.length === 0) { withoutPos++; continue; }
       for (const loc of located) dots.push({ punkt: p, x: Number(loc.loc_x), y: Number(loc.loc_y) });
     }
-    const open = pts.filter(p => p.status === 'open').length;
+    const open = pts.filter(p => p.status !== 'done').length;
     const done = pts.filter(p => p.status === 'done').length;
     return `
       <div class="db-section">
@@ -2518,7 +2615,7 @@ async function renderBurndown() {
   const totalCount = allPunkte.length;
   const doneCount  = allPunkte.filter(p => p.status === 'done').length;
   const openCount  = totalCount - doneCount;
-  const critOpen   = allPunkte.filter(p => p.status==='open' && p.kategorie==='critical').length;
+  const critOpen   = allPunkte.filter(p => p.status!=='done' && p.kategorie==='critical').length;
 
   const elapsedDays = Math.max(1, (today - startDate) / 86400000);
   const velocity    = doneCount / elapsedDays; // Punkte/Tag
@@ -2652,7 +2749,7 @@ function renderAssigneeSummary() {
   const sec = document.getElementById('assignee-section');
   if (!sec) return;
 
-  const openPts = allPunkte.filter(p => p.status === 'open');
+  const openPts = allPunkte.filter(p => p.status !== 'done');
   const today   = new Date(); today.setHours(0,0,0,0);
 
   // Gruppieren nach verantwortlicher_id
@@ -2710,13 +2807,13 @@ function showDotTooltip(event, id) {
   if (!p) return;
   const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
   const today = new Date(); today.setHours(0,0,0,0);
-  const overdue = p.status === 'open' && p.due_date && new Date(p.due_date + 'T00:00:00') < today;
+  const overdue = p.status !== 'done' && p.due_date && new Date(p.due_date + 'T00:00:00') < today;
   tooltipEl.innerHTML = `
     <div class="tt-num">Punkt #${p.nummer}</div>
     <div class="tt-title">${esc(p.titel)}</div>
     <div class="tt-meta">
       <span class="badge badge-${catCssClass(p.kategorie)}" style="font-size:0.7rem">${catLabel(p.kategorie)}</span>${p.kategorie==='todo'&&p.zustaendig?` <span class="tag" style="font-size:0.7rem;background:#dbeafe;color:#1e40af;border-color:#3b82f6">👤 ${esc(p.zustaendig)}</span>`:''}
-      <span class="badge badge-${p.status}" style="font-size:0.7rem">${p.status === 'open' ? t('statusOpen') : t('statusDone')}</span>
+      ${statusBadgeHtml(p.status)}
     </div>
     ${contact ? `<div class="tt-extra">👷 ${esc(contact.name)}${contact.firma ? ` · ${esc(contact.firma)}` : ''}</div>` : ''}
     ${p.due_date ? `<div class="tt-extra" style="${overdue ? 'color:var(--danger);font-weight:600' : ''}">📅 ${fmtDate(p.due_date)}${overdue ? ' '+t('detOverdue') : ''}</div>` : ''}
@@ -2852,7 +2949,7 @@ async function exportPDFUniversal(filter, withPhotos, withPosition) {
     const etage   = etagenP[0] || null; // primary for plan rendering
     const primaryPins = etage ? (p.locations||[]).filter(l => l.etage_id === etage.id && l.loc_x != null && l.loc_y != null) : [];
     const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
-    const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
+    const overdue = p.status!=='done' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
     const fotos   = photosMap[p.id] || [];
     const hasPlan = withPosition && !!(etage?.plan_base64 && primaryPins.length > 0);
 
@@ -2888,8 +2985,15 @@ async function exportPDFUniversal(filter, withPhotos, withPosition) {
     doc.setTextColor(stripRGB[0], stripRGB[1], stripRGB[2]);
     doc.text(pdfCatLabel + (p.kategorie==='todo'&&p.zustaendig?' · '+p.zustaendig:''), MARGIN+4, ty);
     const kw = doc.getTextWidth(pdfCatLabel + (p.kategorie==='todo'&&p.zustaendig?' · '+p.zustaendig:''));
-    doc.setTextColor(p.status==='done'?22:overdue?204:120, p.status==='done'?163:0, p.status==='done'?74:0);
-    doc.text('   '+(p.status==='done'?t('pdfDone'):overdue?t('pdfOverdueStatus'):t('pdfStatusOpen')), MARGIN+4+kw, ty);
+    // Status-Farbe je Phase
+    const statusS = normalizeStatus(p.status);
+    if (statusS === 'done')             doc.setTextColor(22,163,74);
+    else if (statusS === 'review')      doc.setTextColor(126,34,206);
+    else if (statusS === 'in_progress') doc.setTextColor(29,78,216);
+    else if (overdue)                   doc.setTextColor(204,0,0);
+    else                                doc.setTextColor(120,60,0);
+    const statusTxt = statusS === 'done' ? t('pdfDone') : (overdue ? t('pdfOverdueStatus') + ' (' + statusLabel(statusS) + ')' : statusLabel(statusS));
+    doc.text('   '+statusTxt, MARGIN+4+kw, ty);
     ty += 5;
 
     doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(60,60,60);
@@ -2995,7 +3099,7 @@ async function exportExcelUniversal(filter, withPhotos, withPosition) {
       const etage   = etagenP[0] || null;
       const primaryPins = etage ? (p.locations||[]).filter(l => l.etage_id === etage.id && l.loc_x != null && l.loc_y != null) : [];
       const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
-      const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
+      const overdue = p.status!=='done' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
 
       // Plan vorbereiten — primary etage mit allen Pins drauf
       let planImg = null;
@@ -3018,7 +3122,7 @@ async function exportExcelUniversal(filter, withPhotos, withPosition) {
       const row = ws.addRow({
         nr:'#'+(p.nummer||'?'), titel:p.titel||'',
         kat:(p.kategorie==='critical'?t('xlCritical'):p.kategorie==='todo'?t('xlTodo')+(p.zustaendig?' ('+p.zustaendig+')':''):t('xlNonCritical')),
-        status:p.status==='open'?(overdue?t('xlOverdue'):t('xlOpen')):t('xlDone'),
+        status:statusExportText(p.status, overdue),
         etage:etageNamesStr||'-', verant:contact?.name||'-',
         aufgen:p.aufgenommen_von||'-',
         faellig:p.due_date?fmtDate(p.due_date):'-',
@@ -3077,7 +3181,7 @@ async function exportExcelUniversal(filter, withPhotos, withPosition) {
 
 // ===================== EXPORT =====================
 function getExportRows(filter) {
-  const pts = filter === 'open' ? allPunkte.filter(p => p.status === 'open') : [...allPunkte];
+  const pts = filter === 'open' ? allPunkte.filter(p => p.status !== 'done') : [...allPunkte];
   pts.sort((a,b) => (a.nummer||0) - (b.nummer||0));
   return pts;
 }
@@ -3108,12 +3212,12 @@ function exportPDF(filter) {
     const etageNamesStr = etageIds.map(eid => allEtagen.find(e => e.id === eid)?.name).filter(Boolean).join(', ') || '-';
     const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
     const today = new Date(); today.setHours(0,0,0,0);
-    const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
+    const overdue = p.status!=='done' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
     return [
       '#' + (p.nummer||'?'),
       p.titel || '',
       (p.kategorie === 'critical' ? t('xlCritical') : p.kategorie === 'todo' ? t('xlTodo')+(p.zustaendig?' ('+p.zustaendig+')':'') : t('xlNonCritical')),
-      p.status === 'open' ? (overdue ? t('xlOverdue') : t('xlOpen')) : t('xlDone'),
+      statusExportText(p.status, overdue),
       etageNamesStr,
       contact?.name || '-',
       p.aufgenommen_von || '-',
@@ -3171,12 +3275,12 @@ function exportExcel(filter) {
     const etageIds = [...new Set((p.locations||[]).map(l => l.etage_id))];
     const etageNamesStr = etageIds.map(eid => allEtagen.find(e => e.id === eid)?.name).filter(Boolean).join(', ') || '-';
     const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
-    const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
+    const overdue = p.status!=='done' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
     return {
       [t('xlNr')]: '#' + (p.nummer||'?'),
       [t('xlTitle')]: p.titel || '',
       [t('xlCat')]: (p.kategorie === 'critical' ? t('xlCritical') : p.kategorie === 'todo' ? t('xlTodo')+(p.zustaendig?' ('+p.zustaendig+')':'') : t('xlNonCritical')),
-      [t('xlStatus')]: p.status === 'open' ? (overdue ? t('xlOverdue') : t('xlOpen')) : t('xlDone'),
+      [t('xlStatus')]: statusExportText(p.status, overdue),
       [t('xlFloor')]: etageNamesStr,
       [t('xlResp')]: contact?.name || '-',
       [t('xlFirma')]: contact?.firma || '-',
@@ -3261,7 +3365,7 @@ async function exportPDFMitPosition(filter) {
     const etage   = etagenP[0] || null;
     const primaryPins = etage ? (p.locations||[]).filter(l => l.etage_id === etage.id && l.loc_x != null && l.loc_y != null) : [];
     const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
-    const overdue = p.status === 'open' && p.due_date && new Date(p.due_date + 'T00:00:00') < today;
+    const overdue = p.status !== 'done' && p.due_date && new Date(p.due_date + 'T00:00:00') < today;
     const hasPlan = !!(etage?.plan_base64 && primaryPins.length > 0);
 
     // Planhöhe berechnen (korrekte Aspect Ratio)
@@ -3309,10 +3413,14 @@ async function exportPDFMitPosition(filter) {
     doc.setTextColor(p.kategorie === 'critical' ? 204 : 40, 0, 0);
     doc.text(p.kategorie === 'critical' ? t('pdfCritical') : t('pdfNonCritical'), MARGIN + 4, ty);
     const katW = doc.getTextWidth(p.kategorie === 'critical' ? t('pdfCritical') : t('pdfNonCritical'));
-    if (p.status === 'done')   doc.setTextColor(22, 163, 74);
-    else if (overdue)          doc.setTextColor(204, 0, 0);
-    else                       doc.setTextColor(120, 60, 0);
-    doc.text('   ' + (p.status === 'done' ? t('pdfDone') : overdue ? t('pdfOverdueStatus') : t('pdfStatusOpen')),
+    const statusS2 = normalizeStatus(p.status);
+    if (statusS2 === 'done')             doc.setTextColor(22, 163, 74);
+    else if (statusS2 === 'review')      doc.setTextColor(126, 34, 206);
+    else if (statusS2 === 'in_progress') doc.setTextColor(29, 78, 216);
+    else if (overdue)                    doc.setTextColor(204, 0, 0);
+    else                                 doc.setTextColor(120, 60, 0);
+    const statusTxt2 = statusS2 === 'done' ? t('pdfDone') : (overdue ? t('pdfOverdueStatus') + ' (' + statusLabel(statusS2) + ')' : statusLabel(statusS2));
+    doc.text('   ' + statusTxt2,
              MARGIN + 4 + katW, ty);
     ty += 5;
 
@@ -3441,7 +3549,7 @@ async function exportExcelMitBildern(filter) {
       const etageIdsP = [...new Set((p.locations||[]).map(l => l.etage_id))];
       const etageNamesStr = etageIdsP.map(eid => allEtagen.find(e => e.id === eid)?.name).filter(Boolean).join(', ') || '-';
       const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
-      const overdue = p.status === 'open' && p.due_date && new Date(p.due_date + 'T00:00:00') < today;
+      const overdue = p.status !== 'done' && p.due_date && new Date(p.due_date + 'T00:00:00') < today;
 
       // Fotos aus Supabase laden
       let fotos = [];
@@ -3457,7 +3565,7 @@ async function exportExcelMitBildern(filter) {
         nr:      '#' + (p.nummer || '?'),
         titel:   p.titel || '',
         kat:     (p.kategorie === 'critical' ? t('xlCritical') : p.kategorie === 'todo' ? t('xlTodo')+(p.zustaendig?' ('+p.zustaendig+')':'') : t('xlNonCritical')),
-        status:  p.status === 'open' ? (overdue ? t('xlOverdue') : t('xlOpen')) : t('xlDone'),
+        status:  statusExportText(p.status, overdue),
         etage:   etageNamesStr,
         verant:  contact?.name || '-',
         aufgen:  p.aufgenommen_von || '-',
@@ -5168,13 +5276,17 @@ async function showPublicView(punktId) {
       ? 'background:#dbeafe;color:#1e40af;border:1px solid #3b82f6'
       : 'background:#f0f0f0;color:#111;border:1px solid #333';
     const catText = p.kategorie === 'critical' ? '🔴 Critical' : p.kategorie === 'todo' ? '📋 To-Do' : '⚫ Non-Critical';
-    const statusCss = p.status === 'done'
-      ? 'background:#dcfce7;color:#166534;border:1px solid #16a34a'
-      : 'background:#fff7ed;color:#9a3412;border:1px solid #f97316';
-    const statusText = p.status === 'done' ? '✓ Erledigt' : '🟡 Offen';
+    // Status-Style passend zur Phase (open / in_progress / review / done)
+    const statusS = normalizeStatus(p.status);
+    const statusCss =
+      statusS === 'done'        ? 'background:#dcfce7;color:#166534;border:1px solid #16a34a' :
+      statusS === 'review'      ? 'background:#f3e8ff;color:#7e22ce;border:1px solid #a855f7' :
+      statusS === 'in_progress' ? 'background:#dbeafe;color:#1d4ed8;border:1px solid #3b82f6' :
+                                  'background:#fff7ed;color:#9a3412;border:1px solid #fb923c';
+    const statusText = statusIcon(statusS) + ' ' + statusLabel(statusS);
 
     const today = new Date(); today.setHours(0,0,0,0);
-    const overdue = p.status === 'open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
+    const overdue = p.status !== 'done' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
     const dueStr = p.due_date ? new Date(p.due_date+'T00:00:00').toLocaleDateString('de-DE') : '';
 
     let fotosHtml = '';
