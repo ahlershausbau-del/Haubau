@@ -444,6 +444,25 @@ create table if not exists bauplan_eintraege (
   erstellt timestamptz default now()
 );
 
+-- NEU (v1.21): Mehrere Etagen + mehrere Pins pro Punkt
+create table if not exists punkt_locations (
+  id uuid default gen_random_uuid() primary key,
+  punkt_id uuid not null references punkte(id) on delete cascade,
+  etage_id uuid not null references etagen(id) on delete cascade,
+  loc_x float8,
+  loc_y float8,
+  idx int default 0,
+  erstellt timestamptz default now()
+);
+create index if not exists idx_punkt_locations_punkt on punkt_locations(punkt_id);
+create index if not exists idx_punkt_locations_etage on punkt_locations(etage_id);
+
+-- Migration: bestehende Punkte mit Single-Location -> punkt_locations
+insert into punkt_locations (punkt_id, etage_id, loc_x, loc_y)
+select id, etage_id, loc_x, loc_y from punkte
+where etage_id is not null
+and not exists (select 1 from punkt_locations pl where pl.punkt_id = punkte.id);
+
 -- Berechtigungen für anon-Rolle (App nutzt anon key)
 grant select, insert, update, delete on public.etagen             to anon, authenticated, service_role;
 grant select, insert, update, delete on public.contacts           to anon, authenticated, service_role;
@@ -452,6 +471,7 @@ grant select, insert, update, delete on public.photos             to anon, authe
 grant select, insert, update, delete on public.meta               to anon, authenticated, service_role;
 grant select, insert, update, delete on public.album_photos       to anon, authenticated, service_role;
 grant select, insert, update, delete on public.bauplan_eintraege  to anon, authenticated, service_role;
+grant select, insert, update, delete on public.punkt_locations    to anon, authenticated, service_role;
 
 -- RLS aktivieren
 alter table public.etagen             enable row level security;
@@ -461,6 +481,7 @@ alter table public.photos             enable row level security;
 alter table public.meta               enable row level security;
 alter table public.album_photos       enable row level security;
 alter table public.bauplan_eintraege  enable row level security;
+alter table public.punkt_locations    enable row level security;
 
 -- Policies: anon darf alles (App hat eigenen Login-Schutz)
 create policy "anon_full" on public.etagen        for all to anon using (true) with check (true);
@@ -469,7 +490,8 @@ create policy "anon_full" on public.punkte        for all to anon using (true) w
 create policy "anon_full" on public.photos        for all to anon using (true) with check (true);
 create policy "anon_full" on public.meta          for all to anon using (true) with check (true);
 create policy "anon_full" on public.album_photos       for all to anon using (true) with check (true);
-create policy "anon_full" on public.bauplan_eintraege  for all to anon using (true) with check (true);</div>
+create policy "anon_full" on public.bauplan_eintraege  for all to anon using (true) with check (true);
+create policy "anon_full" on public.punkt_locations    for all to anon using (true) with check (true);</div>
 
     <div class="steps" style="margin-top:12px">
       <ol start="4">
@@ -613,26 +635,21 @@ create policy "anon_full" on public.bauplan_eintraege  for all to anon using (tr
       </select>
     </div>
     <div class="form-group"><label>Beschreibung</label><textarea id="f-beschreibung" placeholder="Detaillierte Beschreibung..."></textarea></div>
-    <div class="grid-2">
-      <div class="form-group"><label>Etage <span style="color:var(--muted);font-weight:400">(optional)</span></label><select id="f-etage" onchange="onEtageChange()"><option value="">— Keine / Kein Bezug zum Haus —</option></select></div>
-      <div class="form-group"><label>Verantwortlicher</label><select id="f-verantwortlicher"><option value="">— Verantwortlichen wählen —</option></select></div>
-    </div>
+    <div class="form-group"><label>Verantwortlicher</label><select id="f-verantwortlicher"><option value="">— Verantwortlichen wählen —</option></select></div>
     <div class="form-group"><label>Fälligkeitsdatum</label><input id="f-duedate" type="date"></div>
   </div>
 
-  <div class="card" id="plan-section" style="display:none">
-    <h2 style="margin-bottom:12px">📍 Position auf Grundriss markieren</h2>
-    <p class="plan-hint">Klicke auf den Grundriss um die genaue Position zu markieren.</p>
-    <div style="margin-top:12px;overflow:auto">
-      <div id="plan-container">
-        <img id="plan-img" src="" alt="Grundriss">
-        <div id="current-pin" class="plan-pin" style="display:none">📍</div>
+  <!-- Etagen & Positionen — mehrere Etagen + mehrere Pins pro Etage -->
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      <h2 style="margin:0">📍 Etagen &amp; Positionen <span style="font-size:0.78rem;font-weight:400;color:var(--muted)">(optional, mehrere möglich)</span></h2>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="add-etage-select" style="padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:0.88rem"><option value="">— Etage hinzufügen —</option></select>
       </div>
     </div>
-    <input type="hidden" id="f-loc-x"><input type="hidden" id="f-loc-y">
-  </div>
-  <div class="card" id="no-plan-section" style="display:none">
-    <p style="color:var(--muted);font-size:0.9rem">⚠️ Kein Grundriss für diese Etage. <span style="cursor:pointer;color:var(--primary);text-decoration:underline" onclick="showView('etagen')">Jetzt hochladen →</span></p>
+    <p style="font-size:0.82rem;color:var(--muted);margin-bottom:10px">Auf den Grundriss <strong>tippen</strong> = Pin setzen · <strong>Pin antippen</strong> = entfernen · Eine Etage darf mehrere Pins haben.</p>
+    <div id="locations-container"></div>
+    <div id="locations-empty-hint" style="display:none;padding:18px;text-align:center;color:var(--muted);font-size:0.88rem;background:#fafafa;border:1px dashed #ddd;border-radius:8px">Noch keine Etage hinzugefügt — der Punkt hat keinen Hausbezug.</div>
   </div>
 
   <div class="card">
@@ -1477,10 +1494,14 @@ function initAfterLogin() {
 // ===================== STATE =====================
 let sb; // supabase client
 let currentUser = null; // eingeloggter Benutzer
-let allPunkte = [], allEtagen = [], allContacts = [];
+let allPunkte = [], allEtagen = [], allContacts = [], allLocations = [];
+// Maps each punkt.id -> array of {id, etage_id, loc_x, loc_y, idx} for that punkt
+let locationsByPunkt = new Map();
 let editingId = null, editingEtageId = null, editingContactId = null;
 let pendingEtagePlanBase64 = null;
 let currentPhotos = []; // [{base64, isNew}]
+let currentLocations = []; // [{etage_id, x, y, tempId}] — multiple pins per etage allowed
+let nextLocTempId = 1;
 
 // ===================== COMPRESS =====================
 async function compressToBase64(file, maxPx = 1200, quality = 0.72) {
@@ -1568,20 +1589,60 @@ async function startApp() {
 }
 
 async function loadAll() {
-  const [e, c, p] = await Promise.all([
+  const [e, c, p, l] = await Promise.all([
     sb.from('etagen').select('id,name,plan_base64,created_at').order('created_at'),
     sb.from('contacts').select('*').order('name'),
-    sb.from('punkte').select('*').order('nummer', { ascending: false })
+    sb.from('punkte').select('*').order('nummer', { ascending: false }),
+    sb.from('punkt_locations').select('*').order('idx')
   ]);
   if (e.error) throw e.error;
   allEtagen = e.data || [];
   allContacts = c.data || [];
   allPunkte = p.data || [];
+  // punkt_locations may not exist on legacy DBs — warn but continue
+  if (l.error) {
+    console.warn('punkt_locations Tabelle nicht gefunden — bitte SQL-Migration aus dem Config-Screen ausführen. Fehler:', l.error.message);
+    allLocations = [];
+  } else {
+    allLocations = l.data || [];
+  }
+  rebuildLocationsIndex();
+}
+
+// Rebuild the punkt_id -> [locations] map and attach .locations to each punkt
+function rebuildLocationsIndex() {
+  locationsByPunkt = new Map();
+  for (const loc of allLocations) {
+    if (!locationsByPunkt.has(loc.punkt_id)) locationsByPunkt.set(loc.punkt_id, []);
+    locationsByPunkt.get(loc.punkt_id).push(loc);
+  }
+  // Attach for convenient access in render functions
+  for (const p of allPunkte) {
+    p.locations = locationsByPunkt.get(p.id) || [];
+    // Legacy fallback: if a punkt has no rows in punkt_locations but has the
+    // old single etage_id, treat the old fields as one virtual location.
+    if (p.locations.length === 0 && p.etage_id) {
+      p.locations = [{
+        id: '__legacy__' + p.id, punkt_id: p.id, etage_id: p.etage_id,
+        loc_x: p.loc_x, loc_y: p.loc_y, idx: 0, __legacy: true
+      }];
+    }
+  }
+}
+
+async function refreshLocations() {
+  const { data, error } = await sb.from('punkt_locations').select('*').order('idx');
+  if (!error) { allLocations = data || []; rebuildLocationsIndex(); }
 }
 
 async function refreshPunkte() {
-  const { data, error } = await sb.from('punkte').select('*').order('nummer', { ascending: false });
+  const [{ data, error }, locRes] = await Promise.all([
+    sb.from('punkte').select('*').order('nummer', { ascending: false }),
+    sb.from('punkt_locations').select('*').order('idx')
+  ]);
   if (!error) allPunkte = data || [];
+  if (!locRes.error) allLocations = locRes.data || [];
+  rebuildLocationsIndex();
 }
 
 // ===================== LOADING =====================
@@ -1631,7 +1692,7 @@ function renderListe() {
 
   const filtered = allPunkte.filter(p => {
     if (search && !p.titel?.toLowerCase().includes(search) && !p.beschreibung?.toLowerCase().includes(search)) return false;
-    if (etageF && p.etage_id !== etageF) return false;
+    if (etageF && !(p.locations||[]).some(l => l.etage_id === etageF)) return false;
     if (katF && p.kategorie !== katF) return false;
     if (statusF && p.status !== statusF) return false;
     if (vF && p.verantwortlicher_id !== vF) return false;
@@ -1646,7 +1707,10 @@ function renderListe() {
 
   const today = new Date(); today.setHours(0,0,0,0);
   container.innerHTML = filtered.map(p => {
-    const etage = allEtagen.find(e => e.id === p.etage_id);
+    // Collect unique etagen across all locations for this punkt
+    const etageIds = [...new Set((p.locations || []).map(l => l.etage_id))];
+    const etagen = etageIds.map(eid => allEtagen.find(e => e.id === eid)).filter(Boolean);
+    const totalPins = (p.locations || []).filter(l => l.loc_x != null && l.loc_y != null).length;
     const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
     const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
     return `
@@ -1659,7 +1723,8 @@ function renderListe() {
             <span class="badge badge-${catCssClass(p.kategorie)}">${catLabel(p.kategorie)}</span>
             <span class="badge badge-${p.status}">${p.status==='open'?t('statusOpen'):t('statusDone')}</span>
             ${p.kategorie==='todo'&&p.zustaendig?`<span class="tag" style="background:#dbeafe;color:#1e40af;border-color:#3b82f6">👤 ${esc(p.zustaendig)}</span>`:''}
-            ${etage?`<span class="tag">🏢 ${esc(etage.name)}</span>`:''}
+            ${etagen.map(e=>`<span class="tag">🏢 ${esc(e.name)}</span>`).join('')}
+            ${totalPins>1?`<span class="tag" style="background:#fef3c7;color:#92400e;border-color:#f59e0b">📍 ${totalPins} Positionen</span>`:''}
             ${contact?`<span class="tag">👷 ${esc(contact.name)}</span>`:''}
             ${p.due_date?`<span class="tag" style="${overdue?'color:var(--danger);font-weight:600':''}">📅 ${fmtDate(p.due_date)}${overdue?' ⚠️':''}</span>`:''}
             ${p.foto_count?`<span class="tag">📷 ${p.foto_count}</span>`:''}
@@ -1697,8 +1762,15 @@ function populateFilters() {
 async function openDetail(id) {
   const p = allPunkte.find(x => x.id === id);
   if (!p) return;
-  const etage = allEtagen.find(e => e.id === p.etage_id);
   const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
+  // Build map: etage_id -> {etage, pins:[{x,y}]}
+  const locsByEtage = new Map();
+  for (const l of (p.locations || [])) {
+    if (!locsByEtage.has(l.etage_id)) locsByEtage.set(l.etage_id, []);
+    if (l.loc_x != null && l.loc_y != null) locsByEtage.get(l.etage_id).push({x: Number(l.loc_x), y: Number(l.loc_y)});
+  }
+  const etagenList = [...locsByEtage.keys()].map(eid => allEtagen.find(e => e.id === eid)).filter(Boolean);
+  const etagenNames = etagenList.map(e => e.name).join(', ');
 
   document.getElementById('detail-title').textContent = `#${p.nummer} – ${p.titel}`;
   document.getElementById('detail-badges').innerHTML = `
@@ -1717,18 +1789,31 @@ async function openDetail(id) {
   } catch{}
   hideLoading();
 
-  const planHtml=etage?.plan_base64&&p.loc_x!=null?`
-    <div class="detail-section"><h3>${t('detPosition')}</h3>
-      <div class="detail-plan"><img src="${etage.plan_base64}" alt="Grundriss">
-        <div class="plan-pin" style="left:${p.loc_x}%;top:${p.loc_y}%;display:block">📍</div>
-      </div></div>`:'';
+  // Plan sections — one per etage with all its pins
+  let planHtml = '';
+  if (etagenList.length > 0) {
+    const sections = etagenList.map(etage => {
+      const pins = locsByEtage.get(etage.id) || [];
+      if (!etage.plan_base64) return '';
+      const pinHtml = pins.map(pin =>
+        `<div class="plan-pin" style="left:${pin.x}%;top:${pin.y}%;display:block">📍</div>`
+      ).join('');
+      const titleSuffix = pins.length > 1 ? ` <span style="font-weight:400;color:var(--muted);font-size:0.85rem">(${pins.length} Pins)</span>` : pins.length === 0 ? ` <span style="font-weight:400;color:var(--muted);font-size:0.85rem">(ohne Pin)</span>` : '';
+      return `
+        <div style="margin-bottom:14px">
+          <h4 style="margin:0 0 6px;font-size:0.95rem">🏢 ${esc(etage.name)}${titleSuffix}</h4>
+          <div class="detail-plan"><img src="${etage.plan_base64}" alt="Grundriss">${pinHtml}</div>
+        </div>`;
+    }).filter(Boolean).join('');
+    if (sections) planHtml = `<div class="detail-section"><h3>${t('detPosition')}</h3>${sections}</div>`;
+  }
   const fotosHtml=fotos.length?`<div class="detail-section"><h3>${t('detPhotos')} (${fotos.length})</h3>
     <div class="photo-grid">${fotos.map(b=>`<div class="photo-thumb"><img src="${b}" onclick="showFullPhoto('${b}')"></div>`).join('')}</div></div>`:'';
 
   document.getElementById('detail-content').innerHTML=`
     <div class="detail-section"><h3>Details</h3>
       <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:0.9rem;line-height:1.8">
-        ${etage?`<div><strong>${t('detFloor')}</strong> ${esc(etage.name)}</div>`:''}
+        ${etagenNames?`<div><strong>${t('detFloor')}</strong> ${esc(etagenNames)}</div>`:''}
         ${contact?`<div><strong>${t('detResp')}</strong> ${esc(contact.name)}${contact.firma?` (${esc(contact.firma)})`:''}  </div>`:''}
         ${p.due_date?`<div><strong>${t('detDue')}</strong> <span style="${overdue?'color:var(--danger);font-weight:600':''}">${fmtDate(p.due_date)}${overdue?' '+t('detOverdue'):''}</span></div>`:''}
         ${p.aufgenommen_von?`<div><strong>${t('detRecBy')}</strong> ✍️ ${esc(p.aufgenommen_von)}</div>`:''}
@@ -1802,20 +1887,17 @@ function updateTodoVisibility() {
 }
 
 function resetForm() {
-  editingId=null; currentPhotos=[];
+  editingId=null; currentPhotos=[]; currentLocations=[];
   document.getElementById('form-title').textContent=t('formTitleNew');
-  ['f-titel','f-beschreibung','f-loc-x','f-loc-y'].forEach(i=>document.getElementById(i).value='');
+  ['f-titel','f-beschreibung'].forEach(i=>document.getElementById(i).value='');
   document.getElementById('f-kategorie').value='critical';
   const zEl=document.getElementById('f-zustaendig'); if(zEl) zEl.value='';
   updateTodoVisibility();
   document.getElementById('f-duedate').value='';
   document.getElementById('foto-preview').innerHTML='';
-  document.getElementById('plan-section').style.display='none';
-  document.getElementById('no-plan-section').style.display='none';
-  document.getElementById('current-pin').style.display='none';
   populateFormSelects();
-  document.getElementById('f-etage').value='';
   document.getElementById('f-verantwortlicher').value='';
+  renderLocationsEditor();
 }
 
 function buildContactOptions(placeholder) {
@@ -1828,37 +1910,129 @@ function buildContactOptions(placeholder) {
 }
 
 function populateFormSelects() {
-  const eEl=document.getElementById('f-etage'),eV=eEl.value;
-  eEl.innerHTML=`<option value="">${t('placeholderFloor')}</option>`+allEtagen.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join(''); if(eV)eEl.value=eV;
+  // Verantwortlicher
   const vEl=document.getElementById('f-verantwortlicher'),vV=vEl.value;
   vEl.innerHTML=buildContactOptions(t('placeholderResp')); if(vV)vEl.value=vV;
+  // Refresh the "Add Etage" dropdown (excludes already-added etagen)
+  refreshAddEtageOptions();
 }
 
-function onEtageChange() {
-  document.getElementById('f-loc-x').value=''; document.getElementById('f-loc-y').value='';
-  document.getElementById('current-pin').style.display='none';
-  const etageId=document.getElementById('f-etage').value;
-  if(!etageId){document.getElementById('plan-section').style.display='none';document.getElementById('no-plan-section').style.display='none';return;}
-  const etage=allEtagen.find(e=>e.id===etageId);
-  if(etage?.plan_base64){
-    document.getElementById('plan-img').src=etage.plan_base64;
-    document.getElementById('plan-section').style.display='block';
-    document.getElementById('no-plan-section').style.display='none';
+// ============ Multi-Etagen / Multi-Pin Editor ============
+function refreshAddEtageOptions() {
+  const sel = document.getElementById('add-etage-select');
+  if (!sel) return;
+  const usedEtagen = new Set(currentLocations.map(l => l.etage_id));
+  const available = allEtagen.filter(e => !usedEtagen.has(e.id));
+  sel.innerHTML = '<option value="">— Etage hinzufügen —</option>' +
+    available.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+  sel.value = '';
+  sel.disabled = available.length === 0;
+  // Re-wire change handler (idempotent)
+  sel.onchange = function() {
+    if (this.value) {
+      addEtageToLocations(this.value);
+      this.value = '';
+    }
+  };
+}
+
+function addEtageToLocations(etageId) {
+  if (!etageId) return;
+  // Add a "marker" entry with no pin yet — pins are added by clicking the plan
+  // The presence of the etage_id alone means "this point relates to this floor"
+  // even without a precise pin position.
+  // We store it as a row with null x/y. Multiple pin clicks add more rows.
+  currentLocations.push({ tempId: nextLocTempId++, etage_id: etageId, x: null, y: null });
+  renderLocationsEditor();
+}
+
+function removeEtageFromLocations(etageId) {
+  currentLocations = currentLocations.filter(l => l.etage_id !== etageId);
+  renderLocationsEditor();
+}
+
+function addPinToLocation(etageId, x, y) {
+  // If there's exactly one entry for this etage with null x/y, fill that one.
+  // Otherwise add a new entry.
+  const empties = currentLocations.filter(l => l.etage_id === etageId && l.x == null);
+  if (empties.length === 1) {
+    empties[0].x = x; empties[0].y = y;
   } else {
-    document.getElementById('plan-section').style.display='none';
-    document.getElementById('no-plan-section').style.display='block';
+    currentLocations.push({ tempId: nextLocTempId++, etage_id: etageId, x, y });
   }
+  renderLocationsEditor();
 }
 
-document.getElementById('plan-container').addEventListener('click',function(e){
-  const img=document.getElementById('plan-img');
-  const rect=img.getBoundingClientRect();
-  const x=((e.clientX-rect.left)/rect.width*100).toFixed(2);
-  const y=((e.clientY-rect.top)/rect.height*100).toFixed(2);
-  document.getElementById('f-loc-x').value=x; document.getElementById('f-loc-y').value=y;
-  const pin=document.getElementById('current-pin');
-  pin.style.left=x+'%'; pin.style.top=y+'%'; pin.style.display='block';
-});
+function removePinFromLocation(tempId) {
+  const entry = currentLocations.find(l => l.tempId === tempId);
+  if (!entry) return;
+  const etageId = entry.etage_id;
+  // If this is the last pin on the etage, replace it with an empty marker
+  // (keep the etage assigned but without pin).
+  currentLocations = currentLocations.filter(l => l.tempId !== tempId);
+  const stillHas = currentLocations.some(l => l.etage_id === etageId);
+  if (!stillHas) {
+    currentLocations.push({ tempId: nextLocTempId++, etage_id: etageId, x: null, y: null });
+  }
+  renderLocationsEditor();
+}
+
+function renderLocationsEditor() {
+  const container = document.getElementById('locations-container');
+  const emptyHint = document.getElementById('locations-empty-hint');
+  if (!container) return;
+  // Group by etage_id (preserve insertion order)
+  const groups = new Map(); // etage_id -> [entries]
+  for (const l of currentLocations) {
+    if (!groups.has(l.etage_id)) groups.set(l.etage_id, []);
+    groups.get(l.etage_id).push(l);
+  }
+  if (groups.size === 0) {
+    container.innerHTML = '';
+    emptyHint.style.display = '';
+    refreshAddEtageOptions();
+    return;
+  }
+  emptyHint.style.display = 'none';
+  let html = '';
+  for (const [etageId, entries] of groups.entries()) {
+    const etage = allEtagen.find(e => e.id === etageId);
+    if (!etage) continue;
+    const pins = entries.filter(e => e.x != null && e.y != null);
+    const pinCount = pins.length;
+    const pinsHtml = pins.map(p =>
+      `<div class="loc-pin" style="position:absolute;left:${p.x}%;top:${p.y}%;transform:translate(-50%,-100%);font-size:1.8rem;line-height:1;cursor:pointer;text-shadow:0 2px 4px rgba(0,0,0,0.5);user-select:none" onclick="event.stopPropagation();removePinFromLocation(${p.tempId})" title="Pin entfernen">📍</div>`
+    ).join('');
+    const planSection = etage.plan_base64 ? `
+      <div class="loc-plan-wrap" style="position:relative;display:block;width:100%;max-width:100%;margin-top:8px;border-radius:6px;overflow:hidden;background:#fafafa;cursor:crosshair" data-etage-id="${etageId}" onclick="onLocationPlanClick(event,'${etageId}')">
+        <img src="${etage.plan_base64}" style="display:block;width:100%;height:auto;pointer-events:none" draggable="false">
+        ${pinsHtml}
+      </div>` :
+      `<div style="margin-top:8px;padding:10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;font-size:0.84rem;color:#9a3412">⚠️ Kein Grundriss für diese Etage. <span style="cursor:pointer;color:var(--primary);text-decoration:underline" onclick="showView('etagen')">Jetzt hochladen →</span></div>`;
+    html += `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;background:white">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <div style="font-weight:600;font-size:0.95rem">🏢 ${esc(etage.name)} <span style="color:var(--muted);font-weight:400;font-size:0.82rem">· ${pinCount} Pin${pinCount===1?'':'s'}</span></div>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="removeEtageFromLocations('${etageId}')" title="Etage entfernen">✕ Entfernen</button>
+        </div>
+        ${planSection}
+      </div>`;
+  }
+  container.innerHTML = html;
+  refreshAddEtageOptions();
+}
+
+function onLocationPlanClick(ev, etageId) {
+  // Ignore clicks that came from a pin (they call stopPropagation but be safe)
+  if (ev.target.classList && ev.target.classList.contains('loc-pin')) return;
+  const wrap = ev.currentTarget;
+  const img = wrap.querySelector('img');
+  const rect = img.getBoundingClientRect();
+  const x = parseFloat(((ev.clientX - rect.left) / rect.width * 100).toFixed(2));
+  const y = parseFloat(((ev.clientY - rect.top) / rect.height * 100).toFixed(2));
+  if (x < 0 || x > 100 || y < 0 || y > 100) return;
+  addPinToLocation(etageId, x, y);
+}
 
 async function handleFotoUpload(event) {
   const files=Array.from(event.target.files); event.target.value='';
@@ -1890,18 +2064,13 @@ function editFotoAt(i) {
 
 async function savePunkt() {
   const titel=document.getElementById('f-titel').value.trim();
-  const etageId=document.getElementById('f-etage').value;
   if(!titel){alert(t('alertTitleReq'));return;}
-  // Etage ist optional — Punkte ohne Bezug zum Haus sind erlaubt
 
   const btn=document.getElementById('save-btn'); btn.disabled=true;
   showLoading(t('ldgSave'));
   try{
-    const locX=document.getElementById('f-loc-x').value;
-    const locY=document.getElementById('f-loc-y').value;
     const kategorie=document.getElementById('f-kategorie').value;
     const zustaendig=document.getElementById('f-zustaendig')?.value || null;
-    // For "To-Do" category: assignee is mandatory and must be in the allowed list
     if (kategorie === 'todo') {
       if (!zustaendig || !TODO_ASSIGNEES.includes(zustaendig)) {
         hideLoading(); btn.disabled=false;
@@ -1909,13 +2078,18 @@ async function savePunkt() {
         return;
       }
     }
+    // Primary etage/loc for backward compatibility — uses first location's values
+    const primary = currentLocations[0];
+    const primaryEtageId = primary ? primary.etage_id : null;
+    const primaryLocX    = primary && primary.x != null ? primary.x : null;
+    const primaryLocY    = primary && primary.y != null ? primary.y : null;
     const data={
       titel, kategorie,
       beschreibung:document.getElementById('f-beschreibung').value.trim(),
-      etage_id:etageId||null,
+      etage_id:primaryEtageId,
       verantwortlicher_id:document.getElementById('f-verantwortlicher').value||null,
       due_date:document.getElementById('f-duedate').value||null,
-      loc_x:locX?parseFloat(locX):null, loc_y:locY?parseFloat(locY):null,
+      loc_x:primaryLocX, loc_y:primaryLocY,
       foto_count:currentPhotos.length,
       zustaendig: kategorie === 'todo' ? zustaendig : null,
     };
@@ -1961,7 +2135,28 @@ async function savePunkt() {
       await sb.from('photos').insert({punkt_id:punktId,idx:i,base64:currentPhotos[i].base64});
     }
 
-    await refreshPunkte(); editingId=null; currentPhotos=[];
+    // Save multi-etage / multi-pin locations
+    await sb.from('punkt_locations').delete().eq('punkt_id', punktId);
+    if (currentLocations.length > 0) {
+      const locRows = currentLocations.map((l, i) => ({
+        punkt_id: punktId,
+        etage_id: l.etage_id,
+        loc_x: l.x,
+        loc_y: l.y,
+        idx: i
+      }));
+      const locRes = await sb.from('punkt_locations').insert(locRows);
+      if (locRes.error) {
+        // Tabelle existiert evtl. noch nicht — Hinweis ausgeben
+        if (/punkt_locations/i.test(locRes.error.message || '')) {
+          alert('⚠️ Die Tabelle "punkt_locations" fehlt noch in der Datenbank.\nBitte den SQL-Migrationsblock aus dem Config-Screen ausführen.\n\nFehler: ' + locRes.error.message);
+        } else {
+          console.warn('punkt_locations insert failed:', locRes.error);
+        }
+      }
+    }
+
+    await refreshPunkte(); editingId=null; currentPhotos=[]; currentLocations=[];
     hideLoading(); showView('liste');
   } catch(e){
     hideLoading(); alert(t('alertSaveErr')+e.message);
@@ -1982,19 +2177,21 @@ async function editPunkt(id) {
   const zEl=document.getElementById('f-zustaendig'); if(zEl) zEl.value=p.zustaendig||'';
   updateTodoVisibility();
   document.getElementById('f-beschreibung').value=p.beschreibung||'';
-  document.getElementById('f-etage').value=p.etage_id||'';
   document.getElementById('f-verantwortlicher').value=p.verantwortlicher_id||'';
   document.getElementById('f-duedate').value=p.due_date||'';
-  renderFotoPreview(); onEtageChange();
-  if(p.loc_x!=null){
-    document.getElementById('f-loc-x').value=p.loc_x; document.getElementById('f-loc-y').value=p.loc_y;
-    const pin=document.getElementById('current-pin');
-    pin.style.left=p.loc_x+'%'; pin.style.top=p.loc_y+'%'; pin.style.display='block';
-  }
+  // Populate currentLocations from p.locations (already includes legacy fallback)
+  currentLocations = (p.locations || []).map(loc => ({
+    tempId: nextLocTempId++,
+    etage_id: loc.etage_id,
+    x: loc.loc_x != null ? Number(loc.loc_x) : null,
+    y: loc.loc_y != null ? Number(loc.loc_y) : null
+  }));
+  renderFotoPreview();
+  renderLocationsEditor();
   showView('neu');
 }
 
-function cancelEdit(){editingId=null;currentPhotos=[];showView('liste');}
+function cancelEdit(){editingId=null;currentPhotos=[];currentLocations=[];showView('liste');}
 
 // ===================== ETAGEN =====================
 function renderEtagen() {
@@ -2006,7 +2203,7 @@ function renderEtagen() {
   if (floorsNewBtn) floorsNewBtn.textContent = t('floorsNewBtn');
   if(!allEtagen.length){container.innerHTML=`<div class="empty-state"><div class="icon">🏢</div><p>${t('floorEmpty')}</p></div>`;return;}
   container.innerHTML=allEtagen.map(e=>{
-    const count=allPunkte.filter(p=>p.etage_id===e.id).length;
+    const count=allPunkte.filter(p=>(p.locations||[]).some(l=>l.etage_id===e.id)).length;
     return `<div class="floor-card">
       <div class="floor-thumb-wrap">${e.plan_base64?`<img src="${e.plan_base64}" alt="">`:'<span style="font-size:1.5rem">📋</span>'}</div>
       <div style="flex:1"><div style="font-weight:600">${esc(e.name)}</div>
@@ -2123,7 +2320,7 @@ async function saveEtage() {
 }
 
 async function deleteEtage(id) {
-  const count=allPunkte.filter(p=>p.etage_id===id).length;
+  const count=allPunkte.filter(p=>(p.locations||[]).some(l=>l.etage_id===id)).length;
   if(count>0&&!confirm(t('floorDeleteConfirm',count)))return;
   await sb.from('etagen').delete().eq('id',id);
   allEtagen=allEtagen.filter(e=>e.id!==id);
@@ -2198,8 +2395,17 @@ async function renderDashboard() {
   renderBurndown();
   renderAssigneeSummary();
   container.innerHTML = etagesWithPlan.map(etage => {
-    const pts = allPunkte.filter(p => p.etage_id === etage.id);
-    const located = pts.filter(p => p.loc_x != null);
+    // All punkte that have any location on this etage (with or without pin)
+    const pts = allPunkte.filter(p => (p.locations||[]).some(l => l.etage_id === etage.id));
+    // All pin markers to render on this etage's plan (a punkt can contribute multiple)
+    const dots = [];
+    let withoutPos = 0;
+    for (const p of pts) {
+      const myLocs = (p.locations||[]).filter(l => l.etage_id === etage.id);
+      const located = myLocs.filter(l => l.loc_x != null && l.loc_y != null);
+      if (located.length === 0) { withoutPos++; continue; }
+      for (const loc of located) dots.push({ punkt: p, x: Number(loc.loc_x), y: Number(loc.loc_y) });
+    }
     const open = pts.filter(p => p.status === 'open').length;
     const done = pts.filter(p => p.status === 'done').length;
     return `
@@ -2209,18 +2415,19 @@ async function renderDashboard() {
           <span class="tag">${t('dashTotal',pts.length)}</span>
           ${open ? `<span class="badge badge-open">${t('dashOpen',open)}</span>` : ''}
           ${done ? `<span class="badge badge-done">${t('dashDone',done)}</span>` : ''}
-          ${pts.length - located.length > 0 ? `<span class="tag" style="color:var(--muted)">${t('dashNoPos',pts.length-located.length)}</span>` : ''}
+          ${withoutPos > 0 ? `<span class="tag" style="color:var(--muted)">${t('dashNoPos',withoutPos)}</span>` : ''}
         </div>
         <div class="db-wrap" id="wrap-${etage.id}">
           <img src="${etage.plan_base64}" alt="${esc(etage.name)}" draggable="false">
-          ${located.map(p => {
+          ${dots.map(d => {
+            const p = d.punkt;
             let cls;
             if (p.status === 'done')             cls = 'done';
             else if (p.kategorie === 'critical') cls = 'critical-open';
             else if (p.kategorie === 'todo')     cls = 'todo-open';
             else                                  cls = 'noncritical-open';
             return `<div class="map-dot ${cls}"
-              style="left:${p.loc_x}%;top:${p.loc_y}%"
+              style="left:${d.x}%;top:${d.y}%"
               onmouseenter="showDotTooltip(event,'${p.id}')"
               onmouseleave="hideTooltip()"
               onclick="openDetail('${p.id}')"></div>`;
@@ -2496,6 +2703,10 @@ async function runExport() {
 
 // Grundriss + roter Punkt auf Canvas vorrendern → base64
 function composeFloorplanWithDot(planBase64, locX, locY) {
+  return composeFloorplanWithDots(planBase64, [{x: locX, y: locY}]);
+}
+
+function composeFloorplanWithDots(planBase64, pins) {
   return new Promise(resolve => {
     const img = new Image();
     img.onload = () => {
@@ -2503,16 +2714,19 @@ function composeFloorplanWithDot(planBase64, locX, locY) {
       const c = document.createElement('canvas'); c.width = W; c.height = H;
       const ctx = c.getContext('2d');
       ctx.drawImage(img, 0, 0, W, H);
-      const dx = locX / 100 * W, dy = locY / 100 * H;
-      // Äußerer Halo
-      ctx.beginPath(); ctx.arc(dx, dy, 16, 0, Math.PI*2);
-      ctx.fillStyle = 'rgba(220,38,38,0.18)'; ctx.fill();
-      // Weißer Rand
-      ctx.beginPath(); ctx.arc(dx, dy, 10, 0, Math.PI*2);
-      ctx.fillStyle = 'white'; ctx.fill();
-      // Roter Kern
-      ctx.beginPath(); ctx.arc(dx, dy, 7, 0, Math.PI*2);
-      ctx.fillStyle = '#dc2626'; ctx.fill();
+      for (const pin of (pins || [])) {
+        if (pin.x == null || pin.y == null) continue;
+        const dx = pin.x / 100 * W, dy = pin.y / 100 * H;
+        // Äußerer Halo
+        ctx.beginPath(); ctx.arc(dx, dy, 16, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(220,38,38,0.18)'; ctx.fill();
+        // Weißer Rand
+        ctx.beginPath(); ctx.arc(dx, dy, 10, 0, Math.PI*2);
+        ctx.fillStyle = 'white'; ctx.fill();
+        // Roter Kern
+        ctx.beginPath(); ctx.arc(dx, dy, 7, 0, Math.PI*2);
+        ctx.fillStyle = '#dc2626'; ctx.fill();
+      }
       resolve(c.toDataURL('image/jpeg', 0.85));
     };
     img.onerror = () => resolve(null);
@@ -2526,10 +2740,10 @@ async function exportPDFUniversal(filter, withPhotos, withPosition) {
   if (!pts.length) { alert(t('alertNoItems')); return; }
   showLoading(t('ldgPrepare'));
 
-  // Plandimensionen vorladen
+  // Plandimensionen vorladen — aus allen relevanten Etagen über alle Locations
   const planDims = {};
   if (withPosition) {
-    const eids = [...new Set(pts.map(p => p.etage_id).filter(Boolean))];
+    const eids = [...new Set(pts.flatMap(p => (p.locations||[]).map(l => l.etage_id)).filter(Boolean))];
     for (const eid of eids) {
       const et = allEtagen.find(e => e.id === eid);
       if (et?.plan_base64) planDims[eid] = await getImgDimensions(et.plan_base64);
@@ -2577,11 +2791,16 @@ async function exportPDFUniversal(filter, withPhotos, withPosition) {
 
   for (let i = 0; i < pts.length; i++) {
     const p       = pts[i];
-    const etage   = allEtagen.find(e => e.id === p.etage_id);
+    // Multi-etage: collect all etagen + use primary (first location) for plan render
+    const etageIdsP = [...new Set((p.locations||[]).map(l => l.etage_id))];
+    const etagenP   = etageIdsP.map(eid => allEtagen.find(e => e.id === eid)).filter(Boolean);
+    const etageNamesStr = etagenP.map(e => e.name).join(', ');
+    const etage   = etagenP[0] || null; // primary for plan rendering
+    const primaryPins = etage ? (p.locations||[]).filter(l => l.etage_id === etage.id && l.loc_x != null && l.loc_y != null) : [];
     const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
     const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
     const fotos   = photosMap[p.id] || [];
-    const hasPlan = withPosition && !!(etage?.plan_base64 && p.loc_x != null);
+    const hasPlan = withPosition && !!(etage?.plan_base64 && primaryPins.length > 0);
 
     let planH = 0;
     if (hasPlan) {
@@ -2620,26 +2839,28 @@ async function exportPDFUniversal(filter, withPhotos, withPosition) {
     ty += 5;
 
     doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(60,60,60);
-    if (etage)             { doc.text(t('pdfFloor')+etage.name,                                                    MARGIN+4, ty); ty+=4.5; }
+    if (etageNamesStr)     { doc.text(t('pdfFloor')+etageNamesStr,                                                MARGIN+4, ty); ty+=4.5; }
     if (contact)           { doc.text(t('pdfResp')+contact.name+(contact.firma?' ('+contact.firma+')':''),    MARGIN+4, ty); ty+=4.5; }
     if (p.aufgenommen_von) { doc.text(t('pdfRecBy')+p.aufgenommen_von,                                       MARGIN+4, ty); ty+=4.5; }
     if (p.due_date)        { doc.setTextColor(overdue?204:60,overdue?0:60,0); doc.text(t('pdfDue')+fmtDate(p.due_date)+(overdue?t('pdfOverdue'):''), MARGIN+4, ty); doc.setTextColor(60,60,60); ty+=4.5; }
     if (p.beschreibung)    { doc.setFontSize(7.5); doc.setTextColor(100,100,100); doc.text(doc.splitTextToSize(p.beschreibung, TEXT_W-8).slice(0,3), MARGIN+4, ty); }
 
-    // Plan rechts
+    // Plan rechts — primary etage mit allen Pins darauf
     if (hasPlan) {
       try {
         doc.addImage(etage.plan_base64,'JPEG',PLAN_X,curY+3,PLAN_W,planH);
-        const dx=PLAN_X+(p.loc_x/100)*PLAN_W, dy=curY+3+(p.loc_y/100)*planH;
-        doc.setFillColor(255,255,255); doc.circle(dx,dy,2.8,'F');
-        doc.setFillColor(220,38,38);   doc.circle(dx,dy,2.0,'F');
-        doc.setDrawColor(220,38,38); doc.setLineWidth(0.4); doc.circle(dx,dy,3.8,'S'); doc.setLineWidth(0.2);
+        for (const pin of primaryPins) {
+          const dx=PLAN_X+(Number(pin.loc_x)/100)*PLAN_W, dy=curY+3+(Number(pin.loc_y)/100)*planH;
+          doc.setFillColor(255,255,255); doc.circle(dx,dy,2.8,'F');
+          doc.setFillColor(220,38,38);   doc.circle(dx,dy,2.0,'F');
+          doc.setDrawColor(220,38,38); doc.setLineWidth(0.4); doc.circle(dx,dy,3.8,'S'); doc.setLineWidth(0.2);
+        }
       } catch(e) {}
     } else if (withPosition) {
       doc.setFillColor(245,245,245); doc.setDrawColor(220,220,220);
       doc.roundedRect(PLAN_X, curY+3, PLAN_W, Math.max(26,TOP_H-6), 2,2,'FD');
       doc.setFontSize(7.5); doc.setTextColor(180,180,180);
-      doc.text(p.loc_x==null?t('pdfNoPos'):t('pdfNoFloor'), PLAN_X+PLAN_W/2, curY+TOP_H/2, {align:'center'});
+      doc.text(primaryPins.length===0?t('pdfNoPos'):t('pdfNoFloor'), PLAN_X+PLAN_W/2, curY+TOP_H/2, {align:'center'});
     }
 
     // Foto-Streifen unten
@@ -2714,14 +2935,18 @@ async function exportExcelUniversal(filter, withPhotos, withPosition) {
     for (let i=0; i<pts.length; i++) {
       const p       = pts[i];
       showLoading(t('ldgProcess', i+1, pts.length));
-      const etage   = allEtagen.find(e => e.id === p.etage_id);
+      const etageIdsP = [...new Set((p.locations||[]).map(l => l.etage_id))];
+      const etagenP   = etageIdsP.map(eid => allEtagen.find(e => e.id === eid)).filter(Boolean);
+      const etageNamesStr = etagenP.map(e => e.name).join(', ');
+      const etage   = etagenP[0] || null;
+      const primaryPins = etage ? (p.locations||[]).filter(l => l.etage_id === etage.id && l.loc_x != null && l.loc_y != null) : [];
       const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
       const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
 
-      // Plan vorbereiten
+      // Plan vorbereiten — primary etage mit allen Pins drauf
       let planImg = null;
-      if (withPosition && etage?.plan_base64 && p.loc_x != null) {
-        planImg = await composeFloorplanWithDot(etage.plan_base64, p.loc_x, p.loc_y);
+      if (withPosition && etage?.plan_base64 && primaryPins.length > 0) {
+        planImg = await composeFloorplanWithDots(etage.plan_base64, primaryPins.map(pin => ({ x: Number(pin.loc_x), y: Number(pin.loc_y) })));
       }
 
       // Fotos laden
@@ -2740,7 +2965,7 @@ async function exportExcelUniversal(filter, withPhotos, withPosition) {
         nr:'#'+(p.nummer||'?'), titel:p.titel||'',
         kat:(p.kategorie==='critical'?t('xlCritical'):p.kategorie==='todo'?t('xlTodo')+(p.zustaendig?' ('+p.zustaendig+')':''):t('xlNonCritical')),
         status:p.status==='open'?(overdue?t('xlOverdue'):t('xlOpen')):t('xlDone'),
-        etage:etage?.name||'-', verant:contact?.name||'-',
+        etage:etageNamesStr||'-', verant:contact?.name||'-',
         aufgen:p.aufgenommen_von||'-',
         faellig:p.due_date?fmtDate(p.due_date):'-',
         beschr:p.beschreibung||'-',
@@ -2825,7 +3050,8 @@ function exportPDF(filter) {
   doc.setTextColor(0, 0, 0);
 
   const rows = pts.map(p => {
-    const etage = allEtagen.find(e => e.id === p.etage_id);
+    const etageIds = [...new Set((p.locations||[]).map(l => l.etage_id))];
+    const etageNamesStr = etageIds.map(eid => allEtagen.find(e => e.id === eid)?.name).filter(Boolean).join(', ') || '-';
     const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
     const today = new Date(); today.setHours(0,0,0,0);
     const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
@@ -2834,7 +3060,7 @@ function exportPDF(filter) {
       p.titel || '',
       (p.kategorie === 'critical' ? t('xlCritical') : p.kategorie === 'todo' ? t('xlTodo')+(p.zustaendig?' ('+p.zustaendig+')':'') : t('xlNonCritical')),
       p.status === 'open' ? (overdue ? t('xlOverdue') : t('xlOpen')) : t('xlDone'),
-      etage?.name || '-',
+      etageNamesStr,
       contact?.name || '-',
       p.aufgenommen_von || '-',
       p.due_date ? fmtDate(p.due_date) : '-',
@@ -2888,7 +3114,8 @@ function exportExcel(filter) {
 
   const today = new Date(); today.setHours(0,0,0,0);
   const rows = pts.map(p => {
-    const etage = allEtagen.find(e => e.id === p.etage_id);
+    const etageIds = [...new Set((p.locations||[]).map(l => l.etage_id))];
+    const etageNamesStr = etageIds.map(eid => allEtagen.find(e => e.id === eid)?.name).filter(Boolean).join(', ') || '-';
     const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
     const overdue = p.status==='open' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
     return {
@@ -2896,7 +3123,7 @@ function exportExcel(filter) {
       [t('xlTitle')]: p.titel || '',
       [t('xlCat')]: (p.kategorie === 'critical' ? t('xlCritical') : p.kategorie === 'todo' ? t('xlTodo')+(p.zustaendig?' ('+p.zustaendig+')':'') : t('xlNonCritical')),
       [t('xlStatus')]: p.status === 'open' ? (overdue ? t('xlOverdue') : t('xlOpen')) : t('xlDone'),
-      [t('xlFloor')]: etage?.name || '-',
+      [t('xlFloor')]: etageNamesStr,
       [t('xlResp')]: contact?.name || '-',
       [t('xlFirma')]: contact?.firma || '-',
       [t('xlRecByFull')]: p.aufgenommen_von || '-',
@@ -2945,9 +3172,9 @@ async function exportPDFMitPosition(filter) {
   const PLAN_X = MARGIN + TEXT_W + GAP;
   const PLAN_W = CONTENT_W - TEXT_W - GAP;
 
-  // Planbilder-Dimensionen vorladen (gecacht nach etage_id)
+  // Planbilder-Dimensionen vorladen (gecacht nach etage_id) — alle Locations
   const planDims = {};
-  const etageIds = [...new Set(pts.map(p => p.etage_id).filter(Boolean))];
+  const etageIds = [...new Set(pts.flatMap(p => (p.locations||[]).map(l => l.etage_id)).filter(Boolean))];
   for (const eid of etageIds) {
     const et = allEtagen.find(e => e.id === eid);
     if (et?.plan_base64) planDims[eid] = await getImgDimensions(et.plan_base64);
@@ -2974,10 +3201,14 @@ async function exportPDFMitPosition(filter) {
 
   for (let i = 0; i < pts.length; i++) {
     const p       = pts[i];
-    const etage   = allEtagen.find(e => e.id === p.etage_id);
+    const etageIdsP = [...new Set((p.locations||[]).map(l => l.etage_id))];
+    const etagenP   = etageIdsP.map(eid => allEtagen.find(e => e.id === eid)).filter(Boolean);
+    const etageNamesStr = etagenP.map(e => e.name).join(', ');
+    const etage   = etagenP[0] || null;
+    const primaryPins = etage ? (p.locations||[]).filter(l => l.etage_id === etage.id && l.loc_x != null && l.loc_y != null) : [];
     const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
     const overdue = p.status === 'open' && p.due_date && new Date(p.due_date + 'T00:00:00') < today;
-    const hasPlan = !!(etage?.plan_base64 && p.loc_x != null);
+    const hasPlan = !!(etage?.plan_base64 && primaryPins.length > 0);
 
     // Planhöhe berechnen (korrekte Aspect Ratio)
     let planH = 0;
@@ -3033,7 +3264,7 @@ async function exportPDFMitPosition(filter) {
 
     // Detail-Zeilen
     doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
-    if (etage)              { doc.text(t('pdfFloor') + etage.name, MARGIN + 4, ty); ty += 4.5; }
+    if (etageNamesStr)      { doc.text(t('pdfFloor') + etageNamesStr, MARGIN + 4, ty); ty += 4.5; }
     if (contact)            { doc.text(t('pdfResp') + contact.name + (contact.firma ? ' (' + contact.firma + ')' : ''), MARGIN + 4, ty); ty += 4.5; }
     if (p.aufgenommen_von)  { doc.text(t('pdfRecBy') + p.aufgenommen_von, MARGIN + 4, ty); ty += 4.5; }
     if (p.due_date) {
@@ -3048,26 +3279,20 @@ async function exportPDFMitPosition(filter) {
       doc.text(bLines.slice(0, 3), MARGIN + 4, ty);
     }
 
-    // ---- PLAN RECHTS ----
+    // ---- PLAN RECHTS — primary etage with ALL its pins ----
     if (hasPlan) {
       const imgY = curY + 3;
       try {
         doc.addImage(etage.plan_base64, 'JPEG', PLAN_X, imgY, PLAN_W, planH);
-
-        // Roter Punkt an der markierten Position
-        const dotX = PLAN_X + (p.loc_x / 100) * PLAN_W;
-        const dotY = imgY  + (p.loc_y / 100) * planH;
-
-        // Weißer Rand
-        doc.setFillColor(255, 255, 255);
-        doc.circle(dotX, dotY, 2.8, 'F');
-        // Roter Punkt
-        doc.setFillColor(220, 38, 38);
-        doc.circle(dotX, dotY, 2.0, 'F');
-        // Pulsierende Linie (dünner roter Kreis)
-        doc.setDrawColor(220, 38, 38); doc.setLineWidth(0.4);
-        doc.circle(dotX, dotY, 3.8, 'S');
-        doc.setLineWidth(0.2);
+        for (const pin of primaryPins) {
+          const dotX = PLAN_X + (Number(pin.loc_x) / 100) * PLAN_W;
+          const dotY = imgY  + (Number(pin.loc_y) / 100) * planH;
+          doc.setFillColor(255, 255, 255); doc.circle(dotX, dotY, 2.8, 'F');
+          doc.setFillColor(220, 38, 38);   doc.circle(dotX, dotY, 2.0, 'F');
+          doc.setDrawColor(220, 38, 38); doc.setLineWidth(0.4);
+          doc.circle(dotX, dotY, 3.8, 'S');
+          doc.setLineWidth(0.2);
+        }
       } catch(e) {
         doc.setFontSize(7); doc.setTextColor(160,160,160);
         doc.text('(Plan nicht ladbar)', PLAN_X + 2, curY + planH / 2);
@@ -3077,7 +3302,7 @@ async function exportPDFMitPosition(filter) {
       doc.setFillColor(245, 245, 245); doc.setDrawColor(220,220,220);
       doc.roundedRect(PLAN_X, curY + 3, PLAN_W, Math.max(26, BLOCK_H - 6), 2, 2, 'FD');
       doc.setFontSize(7.5); doc.setTextColor(180, 180, 180);
-      const hint = p.loc_x == null ? t('pdfNoPos') : t('pdfNoFloor');
+      const hint = primaryPins.length === 0 ? t('pdfNoPos') : t('pdfNoFloor');
       doc.text(hint, PLAN_X + PLAN_W / 2, curY + BLOCK_H / 2, { align: 'center' });
     }
 
@@ -3159,7 +3384,8 @@ async function exportExcelMitBildern(filter) {
       const p = pts[i];
       showLoading(t('ldgProcess', i+1, pts.length));
 
-      const etage   = allEtagen.find(e => e.id === p.etage_id);
+      const etageIdsP = [...new Set((p.locations||[]).map(l => l.etage_id))];
+      const etageNamesStr = etageIdsP.map(eid => allEtagen.find(e => e.id === eid)?.name).filter(Boolean).join(', ') || '-';
       const contact = allContacts.find(c => c.id === p.verantwortlicher_id);
       const overdue = p.status === 'open' && p.due_date && new Date(p.due_date + 'T00:00:00') < today;
 
@@ -3178,7 +3404,7 @@ async function exportExcelMitBildern(filter) {
         titel:   p.titel || '',
         kat:     (p.kategorie === 'critical' ? t('xlCritical') : p.kategorie === 'todo' ? t('xlTodo')+(p.zustaendig?' ('+p.zustaendig+')':'') : t('xlNonCritical')),
         status:  p.status === 'open' ? (overdue ? t('xlOverdue') : t('xlOpen')) : t('xlDone'),
-        etage:   etage?.name || '-',
+        etage:   etageNamesStr,
         verant:  contact?.name || '-',
         aufgen:  p.aufgenommen_von || '-',
         faellig: p.due_date ? fmtDate(p.due_date) : '-',
@@ -4629,7 +4855,7 @@ async function printLabelSheet() {
   const sF = document.getElementById('filter-status')?.value || '';
   const qF = (document.getElementById('filter-search')?.value || '').toLowerCase();
   let punkte = allPunkte.filter(p => {
-    if (eF && p.etage_id !== eF) return false;
+    if (eF && !(p.locations||[]).some(l => l.etage_id === eF)) return false;
     if (kF && p.kategorie !== kF) return false;
     if (sF && p.status !== sF) return false;
     if (qF) {
@@ -4823,38 +5049,63 @@ async function showPublicView(punktId) {
     // Build a temporary supabase client just for this fetch (the main one is created after login)
     const { createClient } = supabase;
     const sbPub = createClient(SUPABASE_URL, SUPABASE_KEY);
-    // Fetch the punkt + its etage name + photos in parallel
-    const [pRes, fotosRes] = await Promise.all([
+    // Fetch the punkt + locations + photos in parallel
+    const [pRes, fotosRes, locsRes] = await Promise.all([
       sbPub.from('punkte').select('*').eq('id', punktId).single(),
-      sbPub.from('photos').select('base64').eq('punkt_id', punktId).order('idx')
+      sbPub.from('photos').select('base64').eq('punkt_id', punktId).order('idx'),
+      sbPub.from('punkt_locations').select('*').eq('punkt_id', punktId).order('idx')
     ]);
     if (pRes.error || !pRes.data) {
       content.innerHTML = '<div style="text-align:center;padding:30px;color:var(--danger)"><div style="font-size:2.4rem">❓</div><div style="font-weight:600;margin-top:8px">Punkt nicht gefunden</div><div style="font-size:0.85rem;color:var(--muted);margin-top:6px">Der gescannte Punkt existiert nicht mehr — möglicherweise gelöscht.</div></div>';
       return;
     }
     const p = pRes.data;
-    // Lookup floor name + plan image (separate query so we don't fail if missing)
-    let etageName = '';
-    let etagePlan = '';
-    if (p.etage_id) {
+    // Use new locations table, fallback to legacy single-location columns
+    let locations = (locsRes && !locsRes.error) ? (locsRes.data || []) : [];
+    if (locations.length === 0 && p.etage_id) {
+      locations = [{ etage_id: p.etage_id, loc_x: p.loc_x, loc_y: p.loc_y }];
+    }
+    // Fetch all relevant etagen in one query
+    const uniqEtageIds = [...new Set(locations.map(l => l.etage_id).filter(Boolean))];
+    const etagenMap = new Map();
+    if (uniqEtageIds.length) {
       try {
-        const eRes = await sbPub.from('etagen').select('name,plan_base64').eq('id', p.etage_id).single();
-        if (eRes.data) { etageName = eRes.data.name; etagePlan = eRes.data.plan_base64 || ''; }
+        const eRes = await sbPub.from('etagen').select('id,name,plan_base64').in('id', uniqEtageIds);
+        if (eRes.data) for (const e of eRes.data) etagenMap.set(e.id, e);
       } catch {}
     }
     const fotos = (fotosRes.data || []).map(r => r.base64);
 
-    // Position auf Grundriss (nur wenn Plan + Koordinaten vorhanden)
+    // Group pins per etage
+    const pinsByEtage = new Map();
+    for (const l of locations) {
+      if (!pinsByEtage.has(l.etage_id)) pinsByEtage.set(l.etage_id, []);
+      if (l.loc_x != null && l.loc_y != null) pinsByEtage.get(l.etage_id).push({x: Number(l.loc_x), y: Number(l.loc_y)});
+    }
+    const etagenNamesList = [...pinsByEtage.keys()].map(eid => etagenMap.get(eid)?.name).filter(Boolean);
+    const etagenNames = etagenNamesList.join(', ');
+
+    // Position auf Grundriss — eine Sektion pro Etage mit allen Pins
     let positionHtml = '';
-    if (etagePlan && p.loc_x != null && p.loc_y != null) {
-      positionHtml = `
-        <div style="margin-top:18px">
-          <div style="font-weight:600;margin-bottom:8px;color:var(--text)">📍 Position auf Grundriss${etageName?` <span style="color:var(--muted);font-weight:400">— ${esc(etageName)}</span>`:''}</div>
+    const positionSections = [];
+    for (const [eid, pins] of pinsByEtage.entries()) {
+      const et = etagenMap.get(eid);
+      if (!et || !et.plan_base64) continue;
+      const pinHtml = pins.map(pin =>
+        `<div style="position:absolute;left:${pin.x}%;top:${pin.y}%;transform:translate(-50%,-100%);font-size:2.2rem;line-height:1;text-shadow:0 2px 6px rgba(0,0,0,0.5);pointer-events:none">📍</div>`
+      ).join('');
+      const cntSuffix = pins.length > 1 ? ` <span style="color:var(--muted);font-weight:400;font-size:0.85rem">· ${pins.length} Pins</span>` : '';
+      positionSections.push(`
+        <div style="margin-bottom:14px">
+          <div style="font-weight:600;margin-bottom:6px;color:var(--text)">📍 ${esc(et.name)}${cntSuffix}</div>
           <div style="position:relative;display:block;width:100%;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.15);background:white">
-            <img src="${etagePlan}" style="display:block;width:100%;height:auto" alt="Grundriss">
-            <div style="position:absolute;left:${Number(p.loc_x)}%;top:${Number(p.loc_y)}%;transform:translate(-50%,-100%);font-size:2.2rem;line-height:1;text-shadow:0 2px 6px rgba(0,0,0,0.5);pointer-events:none">📍</div>
+            <img src="${et.plan_base64}" style="display:block;width:100%;height:auto" alt="Grundriss">
+            ${pinHtml}
           </div>
-        </div>`;
+        </div>`);
+    }
+    if (positionSections.length) {
+      positionHtml = `<div style="margin-top:18px"><div style="font-weight:700;margin-bottom:8px;color:var(--text)">Position auf Grundriss</div>${positionSections.join('')}</div>`;
     }
 
     const catBadgeCss = p.kategorie === 'critical'
@@ -4891,7 +5142,7 @@ async function showPublicView(punktId) {
           <span class="badge" style="${catBadgeCss}">${catText}</span>
           <span class="badge" style="${statusCss}">${statusText}</span>
           ${p.kategorie==='todo'&&p.zustaendig?`<span class="badge" style="background:#dbeafe;color:#1e40af;border:1px solid #3b82f6">👤 ${esc(p.zustaendig)}</span>`:''}
-          ${etageName?`<span class="tag">🏢 ${esc(etageName)}</span>`:''}
+          ${etagenNamesList.map(n=>`<span class="tag">🏢 ${esc(n)}</span>`).join('')}
           ${dueStr?`<span class="tag" style="${overdue?'color:#cc0000;font-weight:600':''}">📅 ${dueStr}${overdue?' ⚠️':''}</span>`:''}
         </div>
       </div>
