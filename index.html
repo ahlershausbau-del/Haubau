@@ -970,7 +970,7 @@ const LANG = {
     labelTitle:'Titel *', placeholderTitle:'z.B. Riss in Außenwand',
     labelCat:'Kategorie *', labelDesc:'Beschreibung',
     placeholderDesc:'Detaillierte Beschreibung...',
-    labelFloor:'Etage (optional)', placeholderFloor:'— Keine / Kein Bezug zum Haus —',
+    labelFloor:'Etage <span style="color:var(--muted);font-weight:400">(optional)</span>', placeholderFloor:'— Keine / Kein Bezug zum Haus —',
     labelResp:'Verantwortlicher', placeholderResp:'— Verantwortlichen wählen —',
     labelDue:'Fälligkeitsdatum',
     posHeading:'📍 Position auf Grundriss markieren',
@@ -1143,7 +1143,7 @@ const LANG = {
     labelTitle:'Title *', placeholderTitle:'e.g. Crack in outer wall',
     labelCat:'Category *', labelDesc:'Description',
     placeholderDesc:'Detailed description...',
-    labelFloor:'Floor (optional)', placeholderFloor:'— None / Not related to house —',
+    labelFloor:'Floor <span style="color:var(--muted);font-weight:400">(optional)</span>', placeholderFloor:'— None / Not related to house —',
     labelResp:'Responsible', placeholderResp:'— Select responsible —',
     labelDue:'Due Date',
     posHeading:'📍 Mark position on floor plan',
@@ -1325,13 +1325,21 @@ function applyLang() {
   if (loginPwInput) loginPwInput.placeholder = t('loginPwPlaceholder');
 
   // Form view (view-neu) — labels, hints, buttons, headings
-  const formLabels = document.querySelectorAll('#view-neu .form-group label');
-  if (formLabels[0]) formLabels[0].textContent = t('labelTitle');
-  if (formLabels[1]) formLabels[1].textContent = t('labelCat');
-  if (formLabels[2]) formLabels[2].textContent = t('labelDesc');
-  if (formLabels[3]) formLabels[3].textContent = t('labelFloor');
-  if (formLabels[4]) formLabels[4].textContent = t('labelResp');
-  if (formLabels[5]) formLabels[5].textContent = t('labelDue');
+  // NOTE: Order in DOM is Titel, Kategorie, Zuständig (todo-group), Beschreibung,
+  // Etage, Verantwortlicher, Fälligkeitsdatum. Use input IDs as anchors instead
+  // of brittle nth-of-type indices.
+  const setLabelFor = (id, html) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const lab = el.closest('.form-group')?.querySelector('label');
+    if (lab) lab.innerHTML = html;
+  };
+  setLabelFor('f-titel',           t('labelTitle'));
+  setLabelFor('f-kategorie',       t('labelCat'));
+  setLabelFor('f-beschreibung',    t('labelDesc'));
+  setLabelFor('f-etage',           t('labelFloor'));
+  setLabelFor('f-verantwortlicher',t('labelResp'));
+  setLabelFor('f-duedate',         t('labelDue'));
   const fTitle = document.getElementById('f-titel');
   if (fTitle) fTitle.placeholder = t('placeholderTitle');
   const fDesc = document.getElementById('f-beschreibung');
@@ -1974,7 +1982,7 @@ async function editPunkt(id) {
   const zEl=document.getElementById('f-zustaendig'); if(zEl) zEl.value=p.zustaendig||'';
   updateTodoVisibility();
   document.getElementById('f-beschreibung').value=p.beschreibung||'';
-  document.getElementById('f-etage').value=p.etage_id;
+  document.getElementById('f-etage').value=p.etage_id||'';
   document.getElementById('f-verantwortlicher').value=p.verantwortlicher_id||'';
   document.getElementById('f-duedate').value=p.due_date||'';
   renderFotoPreview(); onEtageChange();
@@ -4842,8 +4850,8 @@ async function showPublicView(punktId) {
       positionHtml = `
         <div style="margin-top:18px">
           <div style="font-weight:600;margin-bottom:8px;color:var(--text)">📍 Position auf Grundriss${etageName?` <span style="color:var(--muted);font-weight:400">— ${esc(etageName)}</span>`:''}</div>
-          <div style="position:relative;display:inline-block;max-width:100%;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.15);background:white">
-            <img src="${etagePlan}" style="display:block;max-width:100%;height:auto" alt="Grundriss">
+          <div style="position:relative;display:block;width:100%;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.15);background:white">
+            <img src="${etagePlan}" style="display:block;width:100%;height:auto" alt="Grundriss">
             <div style="position:absolute;left:${Number(p.loc_x)}%;top:${Number(p.loc_y)}%;transform:translate(-50%,-100%);font-size:2.2rem;line-height:1;text-shadow:0 2px 6px rgba(0,0,0,0.5);pointer-events:none">📍</div>
           </div>
         </div>`;
