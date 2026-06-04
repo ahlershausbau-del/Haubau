@@ -4825,15 +4825,29 @@ async function showPublicView(punktId) {
       return;
     }
     const p = pRes.data;
-    // Lookup floor name (separate query for etage so we don't fail if missing)
+    // Lookup floor name + plan image (separate query so we don't fail if missing)
     let etageName = '';
+    let etagePlan = '';
     if (p.etage_id) {
       try {
-        const eRes = await sbPub.from('etagen').select('name').eq('id', p.etage_id).single();
-        if (eRes.data) etageName = eRes.data.name;
+        const eRes = await sbPub.from('etagen').select('name,plan_base64').eq('id', p.etage_id).single();
+        if (eRes.data) { etageName = eRes.data.name; etagePlan = eRes.data.plan_base64 || ''; }
       } catch {}
     }
     const fotos = (fotosRes.data || []).map(r => r.base64);
+
+    // Position auf Grundriss (nur wenn Plan + Koordinaten vorhanden)
+    let positionHtml = '';
+    if (etagePlan && p.loc_x != null && p.loc_y != null) {
+      positionHtml = `
+        <div style="margin-top:18px">
+          <div style="font-weight:600;margin-bottom:8px;color:var(--text)">📍 Position auf Grundriss${etageName?` <span style="color:var(--muted);font-weight:400">— ${esc(etageName)}</span>`:''}</div>
+          <div style="position:relative;display:inline-block;max-width:100%;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.15);background:white">
+            <img src="${etagePlan}" style="display:block;max-width:100%;height:auto" alt="Grundriss">
+            <div style="position:absolute;left:${Number(p.loc_x)}%;top:${Number(p.loc_y)}%;transform:translate(-50%,-100%);font-size:2.2rem;line-height:1;text-shadow:0 2px 6px rgba(0,0,0,0.5);pointer-events:none">📍</div>
+          </div>
+        </div>`;
+    }
 
     const catBadgeCss = p.kategorie === 'critical'
       ? 'background:#fee2e2;color:#cc0000;border:1px solid #cc0000'
@@ -4852,9 +4866,11 @@ async function showPublicView(punktId) {
 
     let fotosHtml = '';
     if (fotos.length) {
+      // Stash photos on window so the lightbox can navigate between them
+      window.__publicFotos = fotos.slice();
       fotosHtml = '<div style="margin-top:18px"><div style="font-weight:600;margin-bottom:8px;color:var(--text)">📷 Fotos (' + fotos.length + ')</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">' +
-        fotos.map(b64 => `<img src="${b64}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.12)" onclick="window.open(this.src,'_blank')">`).join('') +
-        '</div></div>';
+        fotos.map((_,i) => `<img src="${fotos[i]}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.12)" onclick="openPublicLightbox(${i})">`).join('') +
+        '</div><div style="font-size:0.78rem;color:var(--muted);margin-top:6px">Tippen zum Vergrößern</div></div>';
     }
 
     content.innerHTML = `
@@ -4872,6 +4888,7 @@ async function showPublicView(punktId) {
         </div>
       </div>
       ${p.beschreibung?`<div style="margin-top:16px;padding:14px 16px;background:#fafafa;border-left:4px solid ${p.kategorie==='critical'?'#cc0000':p.kategorie==='todo'?'#3b82f6':'#111'};border-radius:6px"><div style="font-weight:600;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:6px">Beschreibung</div><div style="white-space:pre-wrap;color:var(--text);line-height:1.55">${esc(p.beschreibung)}</div></div>`:''}
+      ${positionHtml}
       ${fotosHtml}
       ${p.aufgenommen_von?`<div style="margin-top:18px;font-size:0.8rem;color:var(--muted)">📝 Erfasst von <strong>${esc(p.aufgenommen_von)}</strong>${p.erstellt?` am ${new Date(p.erstellt).toLocaleDateString('de-DE')}`:''}</div>`:''}
     `;
@@ -4879,6 +4896,51 @@ async function showPublicView(punktId) {
     console.error('public view error:', e);
     content.innerHTML = '<div style="text-align:center;padding:30px;color:var(--danger)"><div style="font-size:2.4rem">⚠️</div><div style="font-weight:600;margin-top:8px">Fehler beim Laden</div><div style="font-size:0.82rem;color:var(--muted);margin-top:6px">' + esc(e.message || String(e)) + '</div></div>';
   }
+}
+
+// Simple inline lightbox for the public view (works without main app helpers)
+let publicLightboxIdx = 0;
+function openPublicLightbox(idx) {
+  const fotos = window.__publicFotos || [];
+  if (!fotos.length) return;
+  publicLightboxIdx = Math.max(0, Math.min(idx, fotos.length - 1));
+  let lb = document.getElementById('public-lightbox');
+  if (!lb) {
+    lb = document.createElement('div');
+    lb.id = 'public-lightbox';
+    lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:20px;touch-action:pan-y';
+    lb.innerHTML = `
+      <button onclick="closePublicLightbox()" style="position:absolute;top:14px;right:14px;background:rgba(255,255,255,0.15);color:white;border:none;width:42px;height:42px;border-radius:50%;font-size:1.4rem;cursor:pointer;line-height:1">×</button>
+      <button onclick="navPublicLightbox(-1)" id="pl-prev" style="position:absolute;left:14px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.15);color:white;border:none;width:48px;height:48px;border-radius:50%;font-size:1.6rem;cursor:pointer;line-height:1">‹</button>
+      <button onclick="navPublicLightbox(1)" id="pl-next" style="position:absolute;right:14px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.15);color:white;border:none;width:48px;height:48px;border-radius:50%;font-size:1.6rem;cursor:pointer;line-height:1">›</button>
+      <img id="pl-img" style="max-width:96vw;max-height:88vh;object-fit:contain;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,0.6)">
+      <div id="pl-counter" style="position:absolute;bottom:18px;left:0;right:0;text-align:center;color:rgba(255,255,255,0.85);font-size:0.9rem;font-weight:500"></div>`;
+    document.body.appendChild(lb);
+    // Swipe support
+    let sx = 0;
+    lb.addEventListener('touchstart', e => { sx = e.touches[0].clientX; }, {passive:true});
+    lb.addEventListener('touchend', e => {
+      const dx = e.changedTouches[0].clientX - sx;
+      if (Math.abs(dx) > 50) navPublicLightbox(dx < 0 ? 1 : -1);
+    }, {passive:true});
+  }
+  document.getElementById('pl-img').src = fotos[publicLightboxIdx];
+  const counter = document.getElementById('pl-counter');
+  counter.textContent = (publicLightboxIdx + 1) + ' / ' + fotos.length;
+  document.getElementById('pl-prev').style.display = fotos.length > 1 ? '' : 'none';
+  document.getElementById('pl-next').style.display = fotos.length > 1 ? '' : 'none';
+  lb.style.display = 'flex';
+}
+function navPublicLightbox(dir) {
+  const fotos = window.__publicFotos || [];
+  if (!fotos.length) return;
+  publicLightboxIdx = (publicLightboxIdx + dir + fotos.length) % fotos.length;
+  document.getElementById('pl-img').src = fotos[publicLightboxIdx];
+  document.getElementById('pl-counter').textContent = (publicLightboxIdx + 1) + ' / ' + fotos.length;
+}
+function closePublicLightbox() {
+  const lb = document.getElementById('public-lightbox');
+  if (lb) lb.style.display = 'none';
 }
 
 function goToLoginFromPublic() {
