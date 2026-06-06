@@ -238,6 +238,47 @@
   .db-plan-header h2 { font-size:1.15rem; }
   .db-wrap { position:relative; display:block; border-radius:12px; overflow:hidden; border:1px solid var(--border); box-shadow:0 2px 8px rgba(0,0,0,0.08); background:#f8fafc; }
   .db-wrap img { width:100%; display:block; }
+
+  /* Tabellenübersicht im Dashboard */
+  .db-table-header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+  .db-table-filters { display:flex; gap:6px; flex-wrap:wrap; align-items:center; flex:1; }
+  .db-table-filters input, .db-table-filters select { padding:6px 10px; border:1px solid var(--border); border-radius:8px; font-size:0.85rem; background:white; }
+  .db-table-filters input { min-width:140px; }
+  .db-table-wrap { background:white; border:1px solid var(--border); border-radius:10px; overflow:auto; max-height:70vh; box-shadow:0 2px 8px rgba(0,0,0,0.05); }
+  .db-table { width:100%; border-collapse:collapse; font-size:0.85rem; }
+  .db-table thead { background:#0f172a; color:white; position:sticky; top:0; z-index:10; }
+  .db-table thead th { padding:9px 10px; text-align:left; font-weight:600; font-size:0.78rem; text-transform:uppercase; letter-spacing:0.03em; border-bottom:1px solid #334155; white-space:nowrap; }
+  .db-table tbody tr { border-bottom:1px solid #f0f0f0; transition:background-color 0.6s; }
+  .db-table tbody tr:hover { background:#fafafa; }
+  .db-table tbody tr.saved-flash { background:#dcfce7; transition:background-color 0s; }
+  .db-table tbody td { padding:6px 8px; vertical-align:middle; color:var(--text); }
+  .db-table tbody td.col-num { font-weight:700; color:#cc0000; font-variant-numeric:tabular-nums; text-align:center; }
+  .db-table tbody td.col-etagen { color:var(--muted); font-size:0.8rem; }
+  .db-table input.cell-input, .db-table select.cell-input, .db-table textarea.cell-input {
+    width:100%; padding:5px 7px; border:1px solid transparent; border-radius:5px; font-size:0.85rem; background:transparent; font-family:inherit; color:var(--text);
+    transition:border-color 0.12s, background 0.12s;
+  }
+  .db-table input.cell-input:hover, .db-table select.cell-input:hover, .db-table textarea.cell-input:hover {
+    border-color:#e0e0e0; background:#fafafa;
+  }
+  .db-table input.cell-input:focus, .db-table select.cell-input:focus, .db-table textarea.cell-input:focus {
+    outline:none; border-color:#3b82f6; background:white; box-shadow:0 0 0 3px rgba(59,130,246,0.12);
+  }
+  .db-table textarea.cell-input { resize:vertical; min-height:32px; max-height:80px; }
+  .db-table select.cell-status[data-status="open"]        { color:#9a3412; font-weight:600; }
+  .db-table select.cell-status[data-status="in_progress"] { color:#1d4ed8; font-weight:600; }
+  .db-table select.cell-status[data-status="review"]      { color:#7e22ce; font-weight:600; }
+  .db-table select.cell-status[data-status="done"]        { color:#166534; font-weight:600; }
+  .db-table select.cell-cat[data-cat="critical"]    { color:#cc0000; font-weight:600; }
+  .db-table select.cell-cat[data-cat="todo"]        { color:#1e40af; font-weight:600; }
+  .db-table select.cell-cat[data-cat="noncritical"] { color:#111;    font-weight:600; }
+  .db-table .action-btns { display:flex; gap:4px; }
+  .db-table .action-btns button { padding:4px 7px; font-size:0.75rem; border:1px solid var(--border); background:white; border-radius:5px; cursor:pointer; color:var(--text); }
+  .db-table .action-btns button:hover { background:#f0f0f0; }
+  .db-table .action-btns button.del { color:#cc0000; border-color:#fca5a5; }
+  .db-table .action-btns button.del:hover { background:#fee2e2; }
+  .db-table td.overdue input[type="date"].cell-input { color:#cc0000; font-weight:700; background:#fff0f0; }
+  @media (max-width:900px) { .db-table { font-size:0.78rem; } .db-table thead th, .db-table tbody td { padding:5px 6px; } }
   .map-dot { position:absolute; width:13px; height:13px; border-radius:50%; background:#dc2626; border:2.5px solid white; box-shadow:0 2px 8px rgba(220,38,38,0.5); transform:translate(-50%,-50%); cursor:pointer; transition:transform 0.15s, box-shadow 0.15s; z-index:10; }
   .map-dot:hover { transform:translate(-50%,-50%) scale(2); box-shadow:0 4px 14px rgba(220,38,38,0.6); }
   .map-dot.noncritical-open { background:#111111; box-shadow:0 2px 8px rgba(0,0,0,0.4); }
@@ -610,7 +651,52 @@ create policy "anon_full" on public.punkt_locations    for all to anon using (tr
   <div class="card-header" style="margin-bottom:20px"><h1>🗺️ Dashboard — Alle Pläne</h1></div>
   <div id="dashboard-content"></div>
   <div id="burndown-section" style="margin-top:28px"></div>
-  <div id="assignee-section" style="margin-top:16px;margin-bottom:32px"></div>
+  <div id="assignee-section" style="margin-top:16px"></div>
+
+  <!-- Tabellenübersicht — Direkte Bearbeitung -->
+  <div class="db-section" id="db-table-section" style="margin-top:28px;margin-bottom:32px">
+    <div class="db-table-header">
+      <h2 style="margin:0">📋 Tabellenübersicht <span style="font-weight:400;color:var(--muted);font-size:0.85rem">— Klicken zum Bearbeiten</span></h2>
+      <div class="db-table-filters">
+        <input type="text" id="dbt-search" placeholder="🔍 Suche..." oninput="renderPunkteTabelle()">
+        <select id="dbt-fcat" onchange="renderPunkteTabelle()">
+          <option value="">Alle Kategorien</option>
+          <option value="critical">🔴 Critical</option>
+          <option value="noncritical">⚫ Non-Critical</option>
+          <option value="todo">📋 To-Do</option>
+        </select>
+        <select id="dbt-fstatus" onchange="renderPunkteTabelle()">
+          <option value="">Alle Status</option>
+          <option value="open">🟡 Offen</option>
+          <option value="in_progress">🔵 In Bearbeitung</option>
+          <option value="review">🟣 Zur Prüfung</option>
+          <option value="done">✓ Erledigt</option>
+        </select>
+        <select id="dbt-fetage" onchange="renderPunkteTabelle()"><option value="">Alle Etagen</option></select>
+        <span id="dbt-count" style="font-size:0.8rem;color:var(--muted);margin-left:auto;align-self:center"></span>
+      </div>
+    </div>
+    <div class="db-table-wrap">
+      <table class="db-table">
+        <thead>
+          <tr>
+            <th style="width:48px">#</th>
+            <th style="min-width:160px">Titel</th>
+            <th style="min-width:120px">Kategorie</th>
+            <th style="min-width:120px">Zuständig</th>
+            <th style="min-width:200px">Beschreibung</th>
+            <th style="min-width:140px">Etagen</th>
+            <th style="min-width:140px">Verantwortlicher</th>
+            <th style="min-width:140px">Fälligkeit</th>
+            <th style="min-width:130px">Aufgenommen v.</th>
+            <th style="min-width:160px">Status</th>
+            <th style="width:90px">Aktion</th>
+          </tr>
+        </thead>
+        <tbody id="db-table-body"></tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <div id="view-liste" class="view active">
@@ -2545,6 +2631,7 @@ async function renderDashboard() {
   }
   renderBurndown();
   renderAssigneeSummary();
+  renderPunkteTabelle();
   container.innerHTML = etagesWithPlan.map(etage => {
     // All punkte that have any location on this etage (with or without pin)
     const pts = allPunkte.filter(p => (p.locations||[]).some(l => l.etage_id === etage.id));
@@ -5377,6 +5464,201 @@ function goToLoginFromPublic() {
 
 // Wire up the photo-editor canvas event handlers now that the DOM is parsed
 attachPhotoEditorHandlers();
+
+// ===================== DASHBOARD-TABELLE — Inline-Bearbeitung =====================
+// Debounce-Cache pro field+id so dass schnelle Tipper nicht 50 DB-Calls auslösen
+const _tblDebounce = new Map();
+
+function renderPunkteTabelle() {
+  const body = document.getElementById('db-table-body');
+  if (!body) return;
+  const search = (document.getElementById('dbt-search')?.value || '').trim().toLowerCase();
+  const fCat   = document.getElementById('dbt-fcat')?.value || '';
+  const fStat  = document.getElementById('dbt-fstatus')?.value || '';
+  const fEt    = document.getElementById('dbt-fetage')?.value || '';
+
+  // Refresh etagen filter options dynamically
+  const eSel = document.getElementById('dbt-fetage');
+  if (eSel) {
+    const cur = eSel.value;
+    eSel.innerHTML = '<option value="">Alle Etagen</option>' +
+      allEtagen.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+    eSel.value = cur;
+  }
+
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  const filtered = allPunkte.filter(p => {
+    if (search && !(p.titel||'').toLowerCase().includes(search) && !(p.beschreibung||'').toLowerCase().includes(search)) return false;
+    if (fCat && p.kategorie !== fCat) return false;
+    if (fStat && normalizeStatus(p.status) !== fStat) return false;
+    if (fEt && !(p.locations||[]).some(l => l.etage_id === fEt)) return false;
+    return true;
+  });
+
+  document.getElementById('dbt-count').textContent = filtered.length + ' von ' + allPunkte.length;
+
+  if (filtered.length === 0) {
+    body.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--muted)">Keine Punkte mit diesen Filtern.</td></tr>`;
+    return;
+  }
+
+  // Build contact options once
+  const contactOpts = '<option value="">— keiner —</option>' +
+    allContacts.map(c => `<option value="${c.id}">${esc(c.name)}${c.firma?' ('+esc(c.firma)+')':''}</option>`).join('');
+  const assigneeOpts = '<option value="">—</option>' +
+    TODO_ASSIGNEES.map(n => `<option value="${n}">${esc(n)}</option>`).join('');
+  const recordedByOpts = '<option value="">—</option>' +
+    Object.keys(USERS).map(u => {
+      const cap = u.charAt(0).toUpperCase() + u.slice(1);
+      return `<option value="${cap}">${cap}</option>`;
+    }).join('');
+
+  body.innerHTML = filtered.map(p => {
+    const overdue = p.status !== 'done' && p.due_date && new Date(p.due_date+'T00:00:00') < today;
+    const etageIds = [...new Set((p.locations||[]).map(l => l.etage_id))];
+    const etagenNames = etageIds.map(eid => allEtagen.find(e => e.id === eid)?.name).filter(Boolean).join(', ') || '—';
+    const isTodo = p.kategorie === 'todo';
+    const cat = p.kategorie || 'critical';
+    const status = normalizeStatus(p.status);
+    return `
+      <tr data-id="${p.id}">
+        <td class="col-num">${p.nummer||'?'}</td>
+        <td><input class="cell-input" type="text" value="${esc(p.titel||'')}" data-id="${p.id}" data-field="titel" oninput="onCellTextChange(this)"></td>
+        <td>
+          <select class="cell-input cell-cat" data-id="${p.id}" data-field="kategorie" data-cat="${cat}" onchange="onCellSelectChange(this); this.setAttribute('data-cat', this.value);">
+            <option value="critical"   ${cat==='critical'?'selected':''}>🔴 Critical</option>
+            <option value="noncritical"${cat==='noncritical'?'selected':''}>⚫ Non-Critical</option>
+            <option value="todo"       ${cat==='todo'?'selected':''}>📋 To-Do</option>
+          </select>
+        </td>
+        <td>
+          <select class="cell-input" data-id="${p.id}" data-field="zustaendig" ${isTodo?'':'disabled style="opacity:0.4"'} onchange="onCellSelectChange(this)">
+            ${assigneeOpts.replace(`value="${esc(p.zustaendig||'')}"`, `value="${esc(p.zustaendig||'')}" selected`)}
+          </select>
+        </td>
+        <td><textarea class="cell-input" rows="1" data-id="${p.id}" data-field="beschreibung" oninput="onCellTextChange(this); autoGrowTextarea(this);">${esc(p.beschreibung||'')}</textarea></td>
+        <td class="col-etagen">${esc(etagenNames)}</td>
+        <td>
+          <select class="cell-input" data-id="${p.id}" data-field="verantwortlicher_id" onchange="onCellSelectChange(this)">
+            ${contactOpts.replace(`value="${p.verantwortlicher_id||''}"`, `value="${p.verantwortlicher_id||''}" selected`)}
+          </select>
+        </td>
+        <td class="${overdue?'overdue':''}"><input class="cell-input" type="date" value="${p.due_date||''}" data-id="${p.id}" data-field="due_date" onchange="onCellSelectChange(this)"></td>
+        <td>
+          <select class="cell-input" data-id="${p.id}" data-field="aufgenommen_von" onchange="onCellSelectChange(this)">
+            ${recordedByOpts.replace(`value="${esc(p.aufgenommen_von||'')}"`, `value="${esc(p.aufgenommen_von||'')}" selected`)}
+          </select>
+        </td>
+        <td>
+          <select class="cell-input cell-status" data-id="${p.id}" data-field="status" data-status="${status}" onchange="onCellSelectChange(this); this.setAttribute('data-status', this.value);">
+            <option value="open"        ${status==='open'?'selected':''}>🟡 Offen</option>
+            <option value="in_progress" ${status==='in_progress'?'selected':''}>🔵 In Bearb.</option>
+            <option value="review"      ${status==='review'?'selected':''}>🟣 Zur Prüfung</option>
+            <option value="done"        ${status==='done'?'selected':''}>✓ Erledigt</option>
+          </select>
+        </td>
+        <td>
+          <div class="action-btns">
+            <button title="Details öffnen" onclick="openDetail('${p.id}')">👁️</button>
+            <button class="del" title="Löschen" onclick="tblDeletePunkt('${p.id}')">🗑️</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+
+  // Auto-grow all textareas to fit content
+  body.querySelectorAll('textarea.cell-input').forEach(autoGrowTextarea);
+}
+
+function autoGrowTextarea(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = (ta.scrollHeight + 2) + 'px';
+}
+
+// Text inputs: debounce 600ms before saving
+function onCellTextChange(input) {
+  const id = input.dataset.id;
+  const field = input.dataset.field;
+  const value = input.value;
+  const key = id + '|' + field;
+  if (_tblDebounce.has(key)) clearTimeout(_tblDebounce.get(key));
+  _tblDebounce.set(key, setTimeout(() => {
+    saveTblField(id, field, value);
+    _tblDebounce.delete(key);
+  }, 600));
+}
+
+// Selects / dates: save immediately
+function onCellSelectChange(input) {
+  const id = input.dataset.id;
+  const field = input.dataset.field;
+  let value = input.value;
+  // Empty -> null
+  if (value === '') value = null;
+  saveTblField(id, field, value);
+}
+
+async function saveTblField(id, field, value) {
+  const p = allPunkte.find(x => x.id === id);
+  if (!p) return;
+  const upd = { [field]: value };
+
+  // Side-effects:
+  // - kategorie wechsel: wenn nicht mehr todo, zustaendig nullen
+  // - status auf done: geschlossen_at setzen; sonst null
+  if (field === 'kategorie' && value !== 'todo') upd.zustaendig = null;
+  if (field === 'status') upd.geschlossen_at = (value === 'done') ? new Date().toISOString() : null;
+
+  const { error } = await sb.from('punkte').update(upd).eq('id', id);
+  if (error) {
+    if (/status_check|check constraint/i.test(error.message||'')) {
+      alert('⚠️ Status-Phasen sind noch nicht migriert. Bitte SQL aus dem Config-Screen ausführen.');
+    } else if (/geschlossen_at/i.test(error.message||'')) {
+      // Retry without geschlossen_at
+      const { error: e2 } = await sb.from('punkte').update({ [field]: value }).eq('id', id);
+      if (e2) { showTblError(id, e2.message); return; }
+    } else {
+      showTblError(id, error.message || String(error));
+      return;
+    }
+  }
+
+  // Optimistic local update
+  Object.assign(p, upd);
+
+  // Flash row green for ~600ms
+  const row = document.querySelector(`#db-table-body tr[data-id="${id}"]`);
+  if (row) {
+    row.classList.add('saved-flash');
+    setTimeout(() => row.classList.remove('saved-flash'), 600);
+  }
+
+  // If kategorie or status changed, the disabled state of "Zuständig" may need updating
+  if (field === 'kategorie') {
+    const zSel = document.querySelector(`#db-table-body tr[data-id="${id}"] select[data-field="zustaendig"]`);
+    if (zSel) {
+      if (value === 'todo') { zSel.disabled = false; zSel.style.opacity = ''; }
+      else                  { zSel.disabled = true;  zSel.style.opacity = '0.4'; zSel.value=''; }
+    }
+  }
+}
+
+function showTblError(id, msg) {
+  alert('Fehler beim Speichern: ' + msg);
+  // Re-render to revert UI state
+  renderPunkteTabelle();
+}
+
+async function tblDeletePunkt(id) {
+  if (!confirm('Diesen Punkt wirklich löschen?')) return;
+  const { error } = await sb.from('punkte').delete().eq('id', id);
+  if (error) { alert('Fehler beim Löschen: ' + error.message); return; }
+  allPunkte = allPunkte.filter(p => p.id !== id);
+  renderPunkteTabelle();
+  renderListe();
+  renderStats();
+}
 
 // ===================== VOICE-PUNKT (Sprach-Erkennung + Smart Parser) =====================
 const voiceState = {
