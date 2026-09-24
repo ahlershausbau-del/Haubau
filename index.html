@@ -526,8 +526,11 @@ create table if not exists album_photos (
   base64 text not null,
   aufgenommen_am timestamptz not null,
   hochgeladen_von text,
+  datei_hash text,
   erstellt timestamptz default now()
 );
+-- Duplikat-Erkennung beim Upload (für bestehende Installationen nachrüsten)
+alter table public.album_photos add column if not exists datei_hash text;
 
 create table if not exists bauplan_eintraege (
   id uuid default gen_random_uuid() primary key,
@@ -3962,6 +3965,23 @@ async function deleteBauplanEntry() {
 let allAlbumPhotos = [];        // metadata only: { id, aufgenommen_am, hochgeladen_von }
 let albumLoaded = false;
 const albumBase64Cache = new Map(); // id -> base64 (loaded on demand as user scrolls)
+
+// Duplikat-Erkennung: SHA-256 der Original-Datei. Der Datei-Dialog des Browsers
+// lässt sich nicht filtern — stattdessen werden bereits hochgeladene Fotos nach
+// der Auswahl automatisch übersprungen.
+const albumHashes = new Set();
+let albumHashSupported = true;  // false, falls die Spalte datei_hash in der DB fehlt
+
+async function fileHash(file) {
+  try {
+    const buf = await file.arrayBuffer();
+    const digest = await crypto.subtle.digest('SHA-256', buf);
+    return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2,'0')).join('');
+  } catch (e) {
+    console.warn('fileHash failed for', file.name, e);
+    return null;
+  }
+}
 let albumIO = null;             // IntersectionObserver for lazy image loading
 const ALBUM_PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="%23e9ecef"/><text x="50" y="55" font-size="32" text-anchor="middle" fill="%23adb5bd">…</text></svg>'
@@ -4033,13 +4053,25 @@ async function loadAlbumPhotos() {
   const PAGE = 1000;
   const collected = [];
   let error = null;
+  albumHashes.clear();
   for (let offset = 0; ; offset += PAGE) {
-    const { data, error: err } = await sb.from('album_photos')
-      .select('id, aufgenommen_am, hochgeladen_von')
+    const cols = albumHashSupported
+      ? 'id, aufgenommen_am, hochgeladen_von, datei_hash'
+      : 'id, aufgenommen_am, hochgeladen_von';
+    let { data, error: err } = await sb.from('album_photos')
+      .select(cols)
       .order('aufgenommen_am', { ascending: false })
       .range(offset, offset + PAGE - 1);
+    // Spalte datei_hash noch nicht angelegt → ohne Duplikat-Erkennung weiterarbeiten
+    if (err && albumHashSupported && /datei_hash/i.test(err.message || '')) {
+      console.warn('Spalte datei_hash fehlt — Duplikat-Erkennung deaktiviert.');
+      albumHashSupported = false;
+      offset -= PAGE;   // gleiche Seite ohne die Spalte erneut holen
+      continue;
+    }
     if (err) { error = err; break; }
     if (!data || data.length === 0) break;
+    data.forEach(p => { if (p.datei_hash) albumHashes.add(p.datei_hash); });
     collected.push(...data);
     if (data.length < PAGE) break;
   }
@@ -4057,6 +4089,7 @@ async function loadAlbumPhotos() {
              '  base64 text not null,\n' +
              '  aufgenommen_am timestamptz not null,\n' +
              '  hochgeladen_von text,\n' +
+             '  datei_hash text,\n' +
              '  erstellt timestamptz default now()\n' +
              ');\n' +
              'grant select, insert, update, delete on public.album_photos to anon, authenticated, service_role;\n' +
@@ -4486,13 +4519,28 @@ async function handleAlbumUpload(event) {
   const exifrLib = window.exifr || window.Exifr;
   console.log('exifr loaded?', exifrReady, 'lib:', !!exifrLib);
 
+  // Hashes müssen bekannt sein, bevor Duplikate erkannt werden können
+  if (!albumLoaded) await loadAlbumPhotos();
+
   // Track which source the date came from per photo
   const sources = { exif: 0, lastmod: 0, now: 0 };
   const details = [];
+  const skipped = [];   // bereits im Album vorhandene Fotos
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     showLoading(t('albumCompressing', i+1, files.length));
+
+    // 0. Duplikat-Check — vor EXIF/Komprimierung, spart die ganze Arbeit
+    let hash = null;
+    if (albumHashSupported) {
+      hash = await fileHash(file);
+      if (hash && albumHashes.has(hash)) {
+        skipped.push(file.name);
+        console.log(`→ ${file.name}: bereits im Album, übersprungen`);
+        continue;
+      }
+    }
 
     let takenAt = null;
     let source = 'now';
@@ -4539,14 +4587,22 @@ async function handleAlbumUpload(event) {
     showLoading(t('ldgSave'));
     let data = null, saveErr = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
-      const res = await sb.from('album_photos').insert({
+      const row = {
         base64,
         aufgenommen_am: takenAt.toISOString(),
         hochgeladen_von: currentUser
-      }).select().single();
+      };
+      if (albumHashSupported && hash) row.datei_hash = hash;
+      const res = await sb.from('album_photos').insert(row).select().single();
       data = res.data; saveErr = res.error;
       if (!saveErr) break;
       const msg = saveErr.message || '';
+      // Spalte datei_hash fehlt → ohne sie weiterspeichern, Upload nicht blockieren
+      if (albumHashSupported && /datei_hash/i.test(msg)) {
+        console.warn('Spalte datei_hash fehlt — speichere ohne Duplikat-Erkennung.');
+        albumHashSupported = false;
+        continue;
+      }
       const isNetwork = /failed to fetch|network|timeout|load failed/i.test(msg);
       if (!isNetwork || attempt === 3) break;
       console.warn(`album_photos insert attempt ${attempt} failed (network), retrying...`, msg);
@@ -4578,6 +4634,8 @@ async function handleAlbumUpload(event) {
       if (data.base64) albumBase64Cache.set(data.id, data.base64);
       // Store only metadata in the list — keeps allAlbumPhotos small
       allAlbumPhotos.push({ id: data.id, aufgenommen_am: data.aufgenommen_am, hochgeladen_von: data.hochgeladen_von });
+      // Hash merken, damit dieselbe Datei im selben Durchlauf nicht doppelt landet
+      if (hash) albumHashes.add(hash);
     }
   }
 
@@ -4587,12 +4645,27 @@ async function handleAlbumUpload(event) {
   renderAlbum();
 
   // Show diagnostic report
-  showUploadReport(sources, details, exifrReady);
+  showUploadReport(sources, details, exifrReady, skipped);
 }
 
-function showUploadReport(sources, details, exifrReady) {
+function showUploadReport(sources, details, exifrReady, skipped = []) {
   const total = sources.exif + sources.lastmod + sources.now;
+
+  // Sonderfall: alles waren Duplikate — kurze, klare Meldung statt Statistik
+  if (total === 0 && skipped.length && !sources.failed) {
+    alert(`✅ Nichts hochzuladen — alle ${skipped.length} ausgewählten Foto${skipped.length!==1?'s waren':' war'} schon im Album.`);
+    return;
+  }
+
   let msg = `📊 Upload-Bericht: ${total} Foto${total!==1?'s':''}\n\n`;
+  if (skipped.length) {
+    msg += `🔁 ${skipped.length} bereits vorhandene${skipped.length!==1?' Fotos':'s Foto'} übersprungen\n\n`;
+  }
+  if (!albumHashSupported) {
+    msg += '⚠️ Duplikat-Erkennung inaktiv — Spalte "datei_hash" fehlt in der Datenbank.\n' +
+           '   In Supabase → SQL Editor ausführen:\n' +
+           '   alter table album_photos add column if not exists datei_hash text;\n\n';
+  }
   msg += exifrReady ? '✅ EXIF-Bibliothek geladen\n\n' : '❌ EXIF-Bibliothek NICHT geladen!\n\n';
   msg += `📷 Aus EXIF (Aufnahmedatum):         ${sources.exif}\n`;
   msg += `💾 Aus Datei-Zeitstempel:             ${sources.lastmod}\n`;
