@@ -1262,6 +1262,7 @@ const LANG = {
     albumDeleteConfirm:'Dieses Foto wirklich löschen?',
     albumKW:(n)=>`KW ${n}`,
     albumCompressing:(i,n)=>`Foto ${i} von ${n} komprimieren...`,
+    albumChecking:(i,n)=>`Foto ${i} von ${n} auf Duplikate prüfen...`,
     albumStartSelect:'🗑️ Auswählen',
     albumCameraBtn:'📷 Kamera',
     albumCancelSelect:'✕ Abbrechen',
@@ -1435,6 +1436,7 @@ const LANG = {
     albumDeleteConfirm:'Really delete this photo?',
     albumKW:(n)=>`Week ${n}`,
     albumCompressing:(i,n)=>`Compressing photo ${i} of ${n}...`,
+    albumChecking:(i,n)=>`Checking photo ${i} of ${n} for duplicates...`,
     albumStartSelect:'🗑️ Select',
     albumCameraBtn:'📷 Camera',
     albumCancelSelect:'✕ Cancel',
@@ -3971,6 +3973,23 @@ const albumBase64Cache = new Map(); // id -> base64 (loaded on demand as user sc
 // der Auswahl automatisch übersprungen.
 const albumHashes = new Set();
 let albumHashSupported = true;  // false, falls die Spalte datei_hash in der DB fehlt
+// Altbestand ohne Fingerabdruck: Aufnahmezeit (ms) → IDs. Wird ein solches Foto
+// erneut ausgewählt, erkennt es der exakte EXIF-Zeitpunkt; die ID wird dabei
+// "verbraucht", damit Serienbilder derselben Sekunde nicht mehrfach wegfallen.
+const albumLegacyByTime = new Map();
+
+// Duplikat-Indizes aus allAlbumPhotos neu aufbauen (nach Laden und Löschen)
+function rebuildAlbumDedupIndex() {
+  albumHashes.clear();
+  albumLegacyByTime.clear();
+  for (const p of allAlbumPhotos) {
+    if (p.datei_hash) { albumHashes.add(p.datei_hash); continue; }
+    const ms = new Date(p.aufgenommen_am).getTime();
+    if (isNaN(ms)) continue;
+    if (!albumLegacyByTime.has(ms)) albumLegacyByTime.set(ms, []);
+    albumLegacyByTime.get(ms).push(p.id);
+  }
+}
 
 async function fileHash(file) {
   try {
@@ -4053,7 +4072,6 @@ async function loadAlbumPhotos() {
   const PAGE = 1000;
   const collected = [];
   let error = null;
-  albumHashes.clear();
   // Bei jedem Laden neu prüfen: war die Spalte beim letzten Versuch nur wegen
   // des PostgREST-Schema-Caches unsichtbar, greift die Erkennung jetzt wieder.
   albumHashSupported = true;
@@ -4074,7 +4092,6 @@ async function loadAlbumPhotos() {
     }
     if (err) { error = err; break; }
     if (!data || data.length === 0) break;
-    data.forEach(p => { if (p.datei_hash) albumHashes.add(p.datei_hash); });
     collected.push(...data);
     if (data.length < PAGE) break;
   }
@@ -4108,6 +4125,7 @@ async function loadAlbumPhotos() {
     return;
   }
   allAlbumPhotos = collected;
+  rebuildAlbumDedupIndex();
 }
 
 async function renderAlbum() {
@@ -4286,6 +4304,7 @@ async function deleteAlbumPhoto(id) {
   showLoading(t('ldgDelete'));
   await sb.from('album_photos').delete().eq('id', id);
   allAlbumPhotos = allAlbumPhotos.filter(p => p.id !== id);
+  rebuildAlbumDedupIndex();  // gelöschtes Foto darf wieder hochgeladen werden
   albumSelected.delete(id);
   albumBase64Cache.delete(id);
   hideLoading();
@@ -4487,6 +4506,7 @@ async function deleteSelectedAlbum() {
   // Delete all at once via "in" filter
   await sb.from('album_photos').delete().in('id', ids);
   allAlbumPhotos = allAlbumPhotos.filter(p => !albumSelected.has(p.id));
+  rebuildAlbumDedupIndex();
   ids.forEach(id => albumBase64Cache.delete(id));
   albumSelected.clear();
   albumDeleteMode = false;
@@ -4531,10 +4551,11 @@ async function handleAlbumUpload(event) {
   const sources = { exif: 0, lastmod: 0, now: 0 };
   const details = [];
   const skipped = [];   // bereits im Album vorhandene Fotos
+  let skippedByDate = 0; // davon über die Aufnahmezeit (Altbestand) erkannt
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    showLoading(t('albumCompressing', i+1, files.length));
+    showLoading(t('albumChecking', i+1, files.length));
 
     // 0. Duplikat-Check — vor EXIF/Komprimierung, spart die ganze Arbeit
     let hash = null;
@@ -4581,6 +4602,29 @@ async function handleAlbumUpload(event) {
       source = 'now';
     }
 
+    // 4. Duplikat-Check für den Altbestand (Fotos ohne Fingerabdruck): gleicher
+    //    EXIF-Aufnahmezeitpunkt auf die Sekunde → gilt als schon hochgeladen.
+    //    Nur bei echtem EXIF — Datei-Zeitstempel und "jetzt" sind zu unscharf.
+    if (source === 'exif') {
+      const ids = albumLegacyByTime.get(takenAt.getTime());
+      if (ids && ids.length) {
+        const legacyId = ids.shift();   // verbrauchen → Serienbilder bleiben erhalten
+        skipped.push(file.name);
+        skippedByDate++;
+        console.log(`→ ${file.name}: Aufnahmezeit ${takenAt.toISOString()} schon im Album, übersprungen`);
+        // Fingerabdruck am alten Eintrag nachtragen → ab jetzt exakte Erkennung
+        if (albumHashSupported && hash) {
+          albumHashes.add(hash);
+          const entry = allAlbumPhotos.find(p => p.id === legacyId);
+          if (entry) entry.datei_hash = hash;
+          sb.from('album_photos').update({ datei_hash: hash }).eq('id', legacyId)
+            .then(({ error }) => { if (error) console.warn('datei_hash nachtragen fehlgeschlagen:', error); });
+        }
+        continue;
+      }
+    }
+
+    showLoading(t('albumCompressing', i+1, files.length));
     sources[source]++;
     details.push({ name: file.name, date: takenAt.toISOString(), source });
     console.log(`→ ${file.name}: ${takenAt.toISOString()} (source: ${source})`);
@@ -4638,7 +4682,7 @@ async function handleAlbumUpload(event) {
       // Cache base64 in memory so the tile appears immediately (no re-fetch needed)
       if (data.base64) albumBase64Cache.set(data.id, data.base64);
       // Store only metadata in the list — keeps allAlbumPhotos small
-      allAlbumPhotos.push({ id: data.id, aufgenommen_am: data.aufgenommen_am, hochgeladen_von: data.hochgeladen_von });
+      allAlbumPhotos.push({ id: data.id, aufgenommen_am: data.aufgenommen_am, hochgeladen_von: data.hochgeladen_von, datei_hash: data.datei_hash || null });
       // Hash merken, damit dieselbe Datei im selben Durchlauf nicht doppelt landet
       if (hash) albumHashes.add(hash);
     }
@@ -4650,21 +4694,30 @@ async function handleAlbumUpload(event) {
   renderAlbum();
 
   // Show diagnostic report
-  showUploadReport(sources, details, exifrReady, skipped);
+  showUploadReport(sources, details, exifrReady, skipped, skippedByDate);
 }
 
-function showUploadReport(sources, details, exifrReady, skipped = []) {
-  const total = sources.exif + sources.lastmod + sources.now;
+function showUploadReport(sources, details, exifrReady, skipped = [], skippedByDate = 0) {
+  const total = sources.exif + sources.lastmod + sources.now;   // versucht
+  const failed = sources.failed || 0;
+  const uploaded = total - failed;                                // tatsächlich gespeichert
 
   // Sonderfall: alles waren Duplikate — kurze, klare Meldung statt Statistik
-  if (total === 0 && skipped.length && !sources.failed) {
-    alert(`✅ Nichts hochzuladen — alle ${skipped.length} ausgewählten Foto${skipped.length!==1?'s waren':' war'} schon im Album.`);
+  if (total === 0 && skipped.length) {
+    alert(`✅ Nichts hochgeladen — alle ${skipped.length} ausgewählten Foto${skipped.length!==1?'s waren':' war'} schon im Album.`);
     return;
   }
 
-  let msg = `📊 Upload-Bericht: ${total} Foto${total!==1?'s':''}\n\n`;
+  let msg = `📊 Upload-Bericht: ${uploaded} Foto${uploaded!==1?'s':''} hochgeladen\n\n`;
   if (skipped.length) {
-    msg += `🔁 ${skipped.length} bereits vorhandene${skipped.length!==1?' Fotos':'s Foto'} übersprungen\n\n`;
+    msg += `🔁 ${skipped.length} bereits vorhandene${skipped.length!==1?' Fotos':'s Foto'} NICHT hochgeladen`;
+    if (skippedByDate) msg += ` (davon ${skippedByDate} über die Aufnahmezeit erkannt)`;
+    msg += '\n\n';
+  }
+  if (failed) {
+    msg += `❌ ${failed} Foto${failed!==1?'s':''} konnte${failed!==1?'n':''} nicht gespeichert werden (Netzwerk):\n`;
+    details.filter(d => d.source === 'failed').slice(0, 5).forEach(d => { msg += `  • ${d.name}\n`; });
+    msg += '   → Einfach nochmal auswählen, bereits Hochgeladenes wird übersprungen.\n\n';
   }
   if (!albumHashSupported) {
     msg += '⚠️ Duplikat-Erkennung INAKTIV — Spalte "datei_hash" nicht erreichbar.\n' +
