@@ -4054,6 +4054,9 @@ async function loadAlbumPhotos() {
   const collected = [];
   let error = null;
   albumHashes.clear();
+  // Bei jedem Laden neu prüfen: war die Spalte beim letzten Versuch nur wegen
+  // des PostgREST-Schema-Caches unsichtbar, greift die Erkennung jetzt wieder.
+  albumHashSupported = true;
   for (let offset = 0; ; offset += PAGE) {
     const cols = albumHashSupported
       ? 'id, aufgenommen_am, hochgeladen_von, datei_hash'
@@ -4519,8 +4522,10 @@ async function handleAlbumUpload(event) {
   const exifrLib = window.exifr || window.Exifr;
   console.log('exifr loaded?', exifrReady, 'lib:', !!exifrLib);
 
-  // Hashes müssen bekannt sein, bevor Duplikate erkannt werden können
-  if (!albumLoaded) await loadAlbumPhotos();
+  // Hashes müssen bekannt sein, bevor Duplikate erkannt werden können.
+  // War die Erkennung abgeschaltet (z.B. weil PostgREST die Spalte noch nicht
+  // im Schema-Cache hatte), hier erneut versuchen statt dauerhaft aufzugeben.
+  if (!albumLoaded || !albumHashSupported) await loadAlbumPhotos();
 
   // Track which source the date came from per photo
   const sources = { exif: 0, lastmod: 0, now: 0 };
@@ -4662,9 +4667,12 @@ function showUploadReport(sources, details, exifrReady, skipped = []) {
     msg += `🔁 ${skipped.length} bereits vorhandene${skipped.length!==1?' Fotos':'s Foto'} übersprungen\n\n`;
   }
   if (!albumHashSupported) {
-    msg += '⚠️ Duplikat-Erkennung inaktiv — Spalte "datei_hash" fehlt in der Datenbank.\n' +
+    msg += '⚠️ Duplikat-Erkennung INAKTIV — Spalte "datei_hash" nicht erreichbar.\n' +
            '   In Supabase → SQL Editor ausführen:\n' +
-           '   alter table album_photos add column if not exists datei_hash text;\n\n';
+           '   alter table album_photos add column if not exists datei_hash text;\n' +
+           '   notify pgrst, \'reload schema\';\n\n';
+  } else {
+    msg += `🔎 Duplikat-Erkennung aktiv (${albumHashes.size} Fotos mit Fingerabdruck)\n\n`;
   }
   msg += exifrReady ? '✅ EXIF-Bibliothek geladen\n\n' : '❌ EXIF-Bibliothek NICHT geladen!\n\n';
   msg += `📷 Aus EXIF (Aufnahmedatum):         ${sources.exif}\n`;

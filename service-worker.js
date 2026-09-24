@@ -9,7 +9,7 @@
  *    speichern. (Echte Write-Queue ist eine separate Erweiterung.)
  */
 
-const SW_VERSION = 'v1.26.0';
+const SW_VERSION = 'v1.27.0';
 const APP_SHELL_CACHE = `hausbau-shell-${SW_VERSION}`;
 const CDN_CACHE       = `hausbau-cdn-${SW_VERSION}`;
 const DATA_CACHE      = `hausbau-data-${SW_VERSION}`;
