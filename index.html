@@ -4028,9 +4028,21 @@ async function loadAlbumPhotos() {
   // sobald sie ins Sichtfeld scrollen (ensureAlbumPhotoLoaded).
   allAlbumPhotos = [];
   albumLoaded = true;
-  const { data, error } = await sb.from('album_photos')
-    .select('id, aufgenommen_am, hochgeladen_von')
-    .order('aufgenommen_am', { ascending: false });
+  // Supabase/PostgREST liefert max. 1000 Zeilen pro Request — daher seitenweise in
+  // Chunks von 1000 laden, bis alle Fotos abgerufen sind (keine Obergrenze).
+  const PAGE = 1000;
+  const collected = [];
+  let error = null;
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error: err } = await sb.from('album_photos')
+      .select('id, aufgenommen_am, hochgeladen_von')
+      .order('aufgenommen_am', { ascending: false })
+      .range(offset, offset + PAGE - 1);
+    if (err) { error = err; break; }
+    if (!data || data.length === 0) break;
+    collected.push(...data);
+    if (data.length < PAGE) break;
+  }
   if (error) {
     console.error('loadAlbumPhotos failed:', error);
     const msgTxt = error.message || JSON.stringify(error);
@@ -4059,7 +4071,7 @@ async function loadAlbumPhotos() {
     alert(msg);
     return;
   }
-  allAlbumPhotos = data || [];
+  allAlbumPhotos = collected;
 }
 
 async function renderAlbum() {
@@ -4523,22 +4535,43 @@ async function handleAlbumUpload(event) {
     // 2. Compress
     const base64 = await compressToBase64(file);
 
-    // 3. Save
+    // 3. Save — mit Retry bei Netzwerk-Fehlern (bis zu 3 Versuche)
     showLoading(t('ldgSave'));
-    const { data, error: saveErr } = await sb.from('album_photos').insert({
-      base64,
-      aufgenommen_am: takenAt.toISOString(),
-      hochgeladen_von: currentUser
-    }).select().single();
+    let data = null, saveErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const res = await sb.from('album_photos').insert({
+        base64,
+        aufgenommen_am: takenAt.toISOString(),
+        hochgeladen_von: currentUser
+      }).select().single();
+      data = res.data; saveErr = res.error;
+      if (!saveErr) break;
+      const msg = saveErr.message || '';
+      const isNetwork = /failed to fetch|network|timeout|load failed/i.test(msg);
+      if (!isNetwork || attempt === 3) break;
+      console.warn(`album_photos insert attempt ${attempt} failed (network), retrying...`, msg);
+      await new Promise(r => setTimeout(r, 800 * attempt));
+    }
     if (saveErr) {
       console.error('album_photos insert failed for', file.name, ':', saveErr);
       sources.failed = (sources.failed || 0) + 1;
       details.push({ name: file.name, date: takenAt.toISOString(), source: 'failed', error: saveErr.message || JSON.stringify(saveErr) });
+      // Nur bei eindeutigen Netzwerk-/Timeout-Fehlern still überspringen; sonst nachfragen
+      const msg = saveErr.message || '';
+      const isNetwork = /failed to fetch|network|timeout|load failed/i.test(msg);
+      if (isNetwork) {
+        // Weiter mit nächstem Foto — Bericht am Ende
+        continue;
+      }
       hideLoading();
-      alert('❌ Foto konnte nicht gespeichert werden: ' + file.name + '\n\n' +
+      const remaining = files.length - i - 1;
+      const goOn = confirm('❌ Foto konnte nicht gespeichert werden: ' + file.name + '\n\n' +
             (saveErr.message || JSON.stringify(saveErr)) +
-            '\n\nMögliche Ursache: Tabelle "album_photos" fehlt, RLS blockiert, oder Foto ist zu groß.\n\nWeitere Uploads werden abgebrochen.');
-      break;
+            '\n\nMögliche Ursache: Tabelle "album_photos" fehlt, RLS blockiert, oder Foto ist zu groß.' +
+            (remaining > 0 ? `\n\nMit den restlichen ${remaining} Foto(s) fortfahren?` : ''));
+      if (!goOn) break;
+      showLoading(t('albumCompressing', i+1, files.length));
+      continue;
     }
     if (data) {
       // Cache base64 in memory so the tile appears immediately (no re-fetch needed)
